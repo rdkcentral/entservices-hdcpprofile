@@ -20,23 +20,21 @@ set(PLUGIN_NAME L2TestsIO)
 set(MODULE_NAME ${NAMESPACE}${PLUGIN_NAME})
 set(THUNDER_PORT 9998)
 
-find_package(${NAMESPACE}Plugins REQUIRED)
-
 set(SRC_FILES )
 
-
-
 if(SRC_FILES)
-    add_library(${MODULE_NAME} SHARED ${SRC_FILES})
+    find_package(${NAMESPACE}Plugins REQUIRED)
+
+    add_library(${MODULE_NAME} SHARED ${SRC_FILES})ES})
 
     set_target_properties(${MODULE_NAME} PROPERTIES
-        CXX_STANDARD 14
-        CXX_STANDARD_REQUIRED YES)
+            CXX_STANDARD 14
+            CXX_STANDARD_REQUIRED YES)
 
     target_compile_definitions(${MODULE_NAME}
-        PRIVATE
-        MODULE_NAME=Plugin_${PLUGIN_NAME}
-        THUNDER_PORT="${THUNDER_PORT}")
+                PRIVATE
+                MODULE_NAME=Plugin_${PLUGIN_NAME}
+                THUNDER_PORT="${THUNDER_PORT}")
 
     target_compile_options(${MODULE_NAME} PRIVATE -Wno-error)
     target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins)
@@ -47,7 +45,7 @@ if(SRC_FILES)
             message ("Found mock library - ${TESTMOCKLIB_LIBRARIES}")
             target_link_libraries(${MODULE_NAME} PRIVATE ${TESTMOCKLIB_LIBRARIES})
         else (TESTMOCKLIB_LIBRARIES)
-            message ("Require ${TESTMOCKLIB_LIBRARIES} library")
+             message ("Require ${TESTMOCKLIB_LIBRARIES} library")
         endif (TESTMOCKLIB_LIBRARIES)
     endif (NOT L2_TEST_OOP_RPC)
 
@@ -56,10 +54,8 @@ if(SRC_FILES)
         message ("Found MockAccessor library - ${MOCKACCESSOR_LIBRARIES}")
         target_link_libraries(${MODULE_NAME} PRIVATE ${MOCKACCESSOR_LIBRARIES})
     else (MOCKACCESSOR_LIBRARIES)
-        message ("Require ${MOCKACCESSOR_LIBRARIES} library")
-    endif (MOCKACCESSOR_LIBRARIES)
-
-    target_include_directories(
+         message ("Require ${MOCKACCESSOR_LIBRARIES} library")
+    endif (MOCKACCESSOR_LIBRARIES)    target_include_directories(
         ${MODULE_NAME} PRIVATE ./
         ../../helpers
         ../../../entservices-testframework/Tests/mocks
@@ -68,7 +64,7 @@ if(SRC_FILES)
         ../../../entservices-testframework/Tests/mocks/MockPlugin
         ../../../entservices-testframework/Tests/L2Tests/L2TestsPlugin
         ${CMAKE_INSTALL_PREFIX}/include
-    )
+        )
 
     install(TARGETS ${MODULE_NAME} DESTINATION lib)
 endif()
