@@ -47,7 +47,7 @@ if(SRC_FILES)
             message ("Found mock library - ${TESTMOCKLIB_LIBRARIES}")
             target_link_libraries(${MODULE_NAME} PRIVATE ${TESTMOCKLIB_LIBRARIES})
         else (TESTMOCKLIB_LIBRARIES)
-             message ("Require ${TESTMOCKLIB_LIBRARIES} library")
+            message ("Require ${TESTMOCKLIB_LIBRARIES} library")
         endif (TESTMOCKLIB_LIBRARIES)
     endif (NOT L2_TEST_OOP_RPC)
 
@@ -56,7 +56,7 @@ if(SRC_FILES)
         message ("Found MockAccessor library - ${MOCKACCESSOR_LIBRARIES}")
         target_link_libraries(${MODULE_NAME} PRIVATE ${MOCKACCESSOR_LIBRARIES})
     else (MOCKACCESSOR_LIBRARIES)
-         message ("Require ${MOCKACCESSOR_LIBRARIES} library")
+        message ("Require ${MOCKACCESSOR_LIBRARIES} library")
     endif (MOCKACCESSOR_LIBRARIES)
 
     target_include_directories(
