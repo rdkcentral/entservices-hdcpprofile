@@ -24,19 +24,19 @@ find_package(${NAMESPACE}Plugins REQUIRED)
 
 set(SRC_FILES )
 
-# Placeholder for future HdcpProfile L2 tests
+
 
 if(SRC_FILES)
     add_library(${MODULE_NAME} SHARED ${SRC_FILES})
 
     set_target_properties(${MODULE_NAME} PROPERTIES
-            CXX_STANDARD 14
-            CXX_STANDARD_REQUIRED YES)
+        CXX_STANDARD 14
+        CXX_STANDARD_REQUIRED YES)
 
     target_compile_definitions(${MODULE_NAME}
-                PRIVATE
-                MODULE_NAME=Plugin_${PLUGIN_NAME}
-                THUNDER_PORT="${THUNDER_PORT}")
+        PRIVATE
+        MODULE_NAME=Plugin_${PLUGIN_NAME}
+        THUNDER_PORT="${THUNDER_PORT}")
 
     target_compile_options(${MODULE_NAME} PRIVATE -Wno-error)
     target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins)
@@ -68,7 +68,7 @@ if(SRC_FILES)
         ../../../entservices-testframework/Tests/mocks/MockPlugin
         ../../../entservices-testframework/Tests/L2Tests/L2TestsPlugin
         ${CMAKE_INSTALL_PREFIX}/include
-        )
+    )
 
     install(TARGETS ${MODULE_NAME} DESTINATION lib)
 endif()
