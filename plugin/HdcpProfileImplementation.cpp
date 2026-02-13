@@ -161,6 +161,7 @@
  
              _adminLock.Lock();
              printf("HdcpProfileImplementation::Register: notification = %p", notification);
+             printf("Test print = %s");
              LOGINFO("Register notification");
  
              // Make sure we can't register the same notification callback multiple times
