@@ -22,6 +22,10 @@ set(THUNDER_PORT 9998)
 
 set(SRC_FILES )
 
+if(PLUGIN_HDCPPROFILE)
+    set(SRC_FILES ${SRC_FILES} tests/HdcpProfile_L2Test.cpp)
+endif()
+
 if(SRC_FILES)
     find_package(${NAMESPACE}Plugins REQUIRED)
 
