@@ -29,7 +29,7 @@ endif()
 if(SRC_FILES)
     find_package(${NAMESPACE}Plugins REQUIRED)
 
-    add_library(${MODULE_NAME} SHARED ${SRC_FILES})ES})
+    add_library(${MODULE_NAME} SHARED ${SRC_FILES})
 
     set_target_properties(${MODULE_NAME} PROPERTIES
             CXX_STANDARD 14
@@ -59,7 +59,9 @@ if(SRC_FILES)
         target_link_libraries(${MODULE_NAME} PRIVATE ${MOCKACCESSOR_LIBRARIES})
     else (MOCKACCESSOR_LIBRARIES)
          message ("Require ${MOCKACCESSOR_LIBRARIES} library")
-    endif (MOCKACCESSOR_LIBRARIES)    target_include_directories(
+    endif (MOCKACCESSOR_LIBRARIES)
+
+    target_include_directories(
         ${MODULE_NAME} PRIVATE ./
         ../../helpers
         ../../../entservices-testframework/Tests/mocks
