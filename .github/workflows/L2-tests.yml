@@ -17,7 +17,7 @@ env:
   INTERFACES_REF: "develop"
   AUTOMATICS_UNAME: ${{ secrets.AUTOMATICS_UNAME}}
   AUTOMATICS_PASSCODE: ${{ secrets. AUTOMATICS_PASSCODE}}
-  RDK_SERVICE_L2_TEST: "OFF"
+  RDK_SERVICE_L2_TEST: "ON"
 
 jobs:
   L2-tests:
@@ -437,6 +437,7 @@ jobs:
           -DCMAKE_DISABLE_FIND_PACKAGE_CEC=ON
           -DUSE_THUNDER_R4=ON
           -DPLUGIN_L2Tests=ON
+          -DPLUGIN_HDCPPROFILE=ON
           -DRDK_SERVICE_L2_TEST=${{env.RDK_SERVICE_L2_TEST}}
           -DDS_FOUND=ON
           -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
@@ -471,7 +472,7 @@ jobs:
           -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/rdk/iarmmgrs-hal
           -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/systemservices
           -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/systemservices/proc
-          -I $GITHUB_WORKSPACE/entservices-deviceanddisplay/helpers
+          -I $GITHUB_WORKSPACE/entservices-hdcpprofile/helpers
           -I $GITHUB_WORKSPACE/install/usr/include
           -I $GITHUB_WORKSPACE/install/usr/include/WPEFramework
           -I ./usr/include/libdrm
@@ -511,6 +512,7 @@ jobs:
           -DPLUGIN_L2Tests=ON
           -DRDK_SERVICE_L2_TEST=${{env.RDK_SERVICE_L2_TEST}}
           -DDS_FOUND=ON
+          -DPLUGIN_HDCPPROFILE=ON
           -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
           -DPLUGIN_ANALYTICS_SIFT_BACKEND=ON
           -DPLUGIN_ANALYTICS_SIFT_2_0_ENABLED="true"
