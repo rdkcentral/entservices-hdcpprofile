@@ -60,13 +60,19 @@ namespace WPEFramework {
 							
 						void Activated(RPC::IRemoteConnection *) override
 						{
-							LOGINFO("HdcpProfile Notification Activated");
+							if(_parent._connectionId == connection->Id())
+							{
+								LOGINFO("HdcpProfile Notification Activated");
+							}
 						}
 		
 						void Deactivated(RPC::IRemoteConnection *connection) override
 						{
-							LOGINFO("HdcpProfile Notification Deactivated");
-							_parent.Deactivated(connection);
+							if(_parent._connectionId == connection->Id())
+							{
+								LOGINFO("HdcpProfile Notification Deactivated");
+								_parent.Deactivated(connection);
+							}
 						}
 					
 						void OnDisplayConnectionChanged(const Exchange::IHdcpProfile::HDCPStatus hdcpstatus) override
