@@ -60,10 +60,12 @@ namespace WPEFramework {
 							
 						void Activated(RPC::IRemoteConnection *) override
 						{
+							LOGINFO("HdcpProfile Notification Activated");
 						}
 		
 						void Deactivated(RPC::IRemoteConnection *connection) override
 						{
+							LOGINFO("HdcpProfile Notification Deactivated");
 							_parent.Deactivated(connection);
 						}
 					
