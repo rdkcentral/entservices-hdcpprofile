@@ -73,6 +73,7 @@ namespace WPEFramework
             _service->AddRef();
             _service->Register(&_hdcpProfileNotification);
             _hdcpProfile = _service->Root<Exchange::IHdcpProfile>(_connectionId, 5000, _T("HdcpProfileImplementation"));
+			LOGINFO("HdcpProfile Parent Connection Id assigned: %u", _connectionId);
 
             if (nullptr != _hdcpProfile)
             {
@@ -152,6 +153,7 @@ namespace WPEFramework
                     connection->Release();
                 }
             }
+			LOGINFO("HdcpProfile Parent Connection Id reset: old=%u, reason=plugin deinitialize", _connectionId);
 			_connectionId = 0;
 
             if (_service != nullptr)
