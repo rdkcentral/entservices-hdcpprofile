@@ -71,8 +71,8 @@ namespace WPEFramework {
 							if(_parent._connectionId == connection->Id())
 							{
 								LOGINFO("HdcpProfile Notification Deactivated");
-								_parent.Deactivated(connection);
 							}
+							_parent.Deactivated(connection);
 						}
 					
 						void OnDisplayConnectionChanged(const Exchange::IHdcpProfile::HDCPStatus hdcpstatus) override
