@@ -129,6 +129,8 @@ namespace WPEFramework
                 Exchange::JHdcpProfile::Unregister(*this);
                 // Stop processing:
                 RPC::IRemoteConnection *connection = service->RemoteConnection(_connectionId);
+				//Added for Crash
+				_hdcpProfile = nullptr;
                 VARIABLE_IS_NOT_USED uint32_t result = _hdcpProfile->Release();
 
                 _hdcpProfile = nullptr;
