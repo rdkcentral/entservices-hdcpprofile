@@ -716,5 +716,8 @@ jobs:
         with:
          name: Build results
          path: |
-          ./  
-
+          build/entservices-hdcpprofile/
+          valgrind_log
+          gdb_log.txt
+          gdb_output.log
+          debug_info.log 
