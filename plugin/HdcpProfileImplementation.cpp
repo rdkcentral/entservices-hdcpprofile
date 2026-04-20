@@ -17,7 +17,6 @@
  * limitations under the License.
  **/
 
-
  #include <string> 
 
  #include "HdcpProfileImplementation.h"
