@@ -82,7 +82,7 @@
          {
              if (HDMI_HOT_PLUG_EVENT_CONNECTED == connectStatus)
              {
-                 LOGINFO("HDMI_HOT_PLUG Status[%d]",connectStatus);
+                 LOGINFO("HDMI_HOT_PLUG Status[%d]");
              }
              onHdcpProfileDisplayConnectionChanged();
          }
