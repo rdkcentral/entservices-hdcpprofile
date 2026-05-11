@@ -31,7 +31,7 @@ set (TEST_LIB
     ${NAMESPACE}Plugins::${NAMESPACE}Plugins
 )
 
-set (TEST_INC ../../helpers)
+set (TEST_INC)
 
 #########################################################################################
 # add_plugin_test_ex: Macro to add plugin tests, it will append to TEST_SRC, TEST_INC,
@@ -101,7 +101,7 @@ macro(add_plugin_test plugin_name test_files)
 endmacro()
 
 # PLUGIN_HDCPPROFILE
-set (HDCPPROFILE_INC ${CMAKE_SOURCE_DIR}/plugin ${CMAKE_SOURCE_DIR}/helpers)
+set (HDCPPROFILE_INC ${CMAKE_SOURCE_DIR}/plugin ${CMAKE_SOURCE_DIR}/../entservices-helpers/helpers)
 set (HDCPPROFILE_LIBS ${NAMESPACE}HdcpProfile ${NAMESPACE}HdcpProfileImplementation)
 add_plugin_test_ex(PLUGIN_HDCPPROFILE tests/test_HdcpProfile.cpp "${HDCPPROFILE_INC}" "${HDCPPROFILE_LIBS}")
 
