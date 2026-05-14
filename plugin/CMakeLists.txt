@@ -22,6 +22,8 @@ set(PLUGIN_IMPLEMENTATION ${MODULE_NAME}Implementation)
 set(PLUGIN_HDCPPROFILE_AUTOSTART "false" CACHE STRING "Automatically start HdcpProfile plugin")
 set(PLUGIN_HDCPPROFILE_STARTUPORDER "" CACHE STRING "To configure startup order of HdcpProfile plugin")
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
 find_package(${NAMESPACE}Plugins REQUIRED)
 find_package(${NAMESPACE}Helpers REQUIRED)
 if (USE_THUNDER_R4)
