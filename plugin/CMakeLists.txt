@@ -22,6 +22,16 @@ set(PLUGIN_IMPLEMENTATION ${MODULE_NAME}Implementation)
 set(PLUGIN_HDCPPROFILE_AUTOSTART "false" CACHE STRING "Automatically start HdcpProfile plugin")
 set(PLUGIN_HDCPPROFILE_STARTUPORDER "" CACHE STRING "To configure startup order of HdcpProfile plugin")
 
+# Build selection: DS_COMRPC (COM-RPC via entservices-devicesettings) or DS_IARM (libds/IARM)
+option(DS_COMRPC "Build HdcpProfile using the DeviceSettings COM-RPC plugin instead of libds/IARM" OFF)
+if (DS_COMRPC)
+    set(DS_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/DS_COMRPC)
+    message(STATUS "HdcpProfile: building with DS_COMRPC (COM-RPC)")
+else()
+    set(DS_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/DS_IARM)
+    message(STATUS "HdcpProfile: building with DS_IARM (libds)")
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 find_package(${NAMESPACE}Plugins REQUIRED)
@@ -32,17 +42,16 @@ else ()
     find_package(${NAMESPACE}Protocols REQUIRED)
 endif (USE_THUNDER_R4)
 
+# --- Outer plugin (HdcpProfile) ---
 add_library(${MODULE_NAME} SHARED
         HdcpProfile.cpp
         Module.cpp)
-
 
 set_target_properties(${MODULE_NAME} PROPERTIES
         CXX_STANDARD 11
         CXX_STANDARD_REQUIRED YES)
 
 target_compile_definitions(${MODULE_NAME} PRIVATE MODULE_NAME=Plugin_${PLUGIN_NAME})
-
 
 target_link_libraries(${MODULE_NAME}
         PRIVATE
@@ -52,25 +61,44 @@ target_link_libraries(${MODULE_NAME}
 install(TARGETS ${MODULE_NAME}
         DESTINATION lib/${STORAGE_DIRECTORY}/plugins)
 
+# --- Implementation library (DS_IARM or DS_COMRPC) ---
 add_library(${PLUGIN_IMPLEMENTATION} SHARED
-        HdcpProfileImplementation.cpp
+        ${DS_SOURCE_DIR}/HdcpProfileImplementation.cpp
         Module.cpp)
+
+target_include_directories(${PLUGIN_IMPLEMENTATION} PRIVATE
+        ${DS_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR})
+
+set_target_properties(${PLUGIN_IMPLEMENTATION} PROPERTIES
+        CXX_STANDARD 11
+        CXX_STANDARD_REQUIRED YES)
+
 target_link_libraries(${PLUGIN_IMPLEMENTATION}
         PRIVATE
         ${NAMESPACE}Plugins::${NAMESPACE}Plugins)
-set_target_properties(${PLUGIN_IMPLEMENTATION} PROPERTIES
-        CXX_STANDARD 11
-        CXX_STANDARD_REQUIRED YES)	
-		
 
 if (USE_THUNDER_R4)
-target_link_libraries(${PLUGIN_IMPLEMENTATION} PRIVATE ${NAMESPACE}COM::${NAMESPACE}COM)
+    target_link_libraries(${PLUGIN_IMPLEMENTATION} PRIVATE ${NAMESPACE}COM::${NAMESPACE}COM)
 else ()
-target_link_libraries(${PLUGIN_IMPLEMENTATION} PRIVATE ${NAMESPACE}Protocols::${NAMESPACE}Protocols)
+    target_link_libraries(${PLUGIN_IMPLEMENTATION} PRIVATE ${NAMESPACE}Protocols::${NAMESPACE}Protocols)
 endif (USE_THUNDER_R4)
 
-find_package(DS)
-find_package(CEC)
+if (DS_COMRPC)
+    # COM-RPC: link against WPEFrameworkHelpers (provides DeviceSettingsClientHelper)
+    target_link_libraries(${PLUGIN_IMPLEMENTATION} PUBLIC
+            ${NAMESPACE}Plugins::${NAMESPACE}Plugins
+            ${NAMESPACE}::${NAMESPACE}Helpers)
+else()
+    # DS_IARM: link against libds
+    find_package(DS)
+    find_package(CEC)
+    target_include_directories(${PLUGIN_IMPLEMENTATION} PRIVATE ${DS_INCLUDE_DIRS})
+    target_link_libraries(${PLUGIN_IMPLEMENTATION} PUBLIC
+            ${NAMESPACE}Plugins::${NAMESPACE}Plugins
+            ${DS_LIBRARIES}
+            ${NAMESPACE}::${NAMESPACE}Helpers)
+endif()
 
 if (RDK_SERVICE_L2_TEST)
     message ("L2 test Enabled")
@@ -83,13 +111,7 @@ if (RDK_SERVICE_L2_TEST)
     endif (TESTMOCKLIB_LIBRARIES)
 endif()
 
-
-target_include_directories(${PLUGIN_IMPLEMENTATION} PRIVATE ${DS_INCLUDE_DIRS})
-
-
 set_source_files_properties(HdcpProfile.cpp PROPERTIES COMPILE_FLAGS "-fexceptions")
-
-target_link_libraries(${PLUGIN_IMPLEMENTATION} PUBLIC ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${DS_LIBRARIES} ${NAMESPACE}::${NAMESPACE}Helpers)
 
 install(TARGETS ${PLUGIN_IMPLEMENTATION}
         DESTINATION lib/${STORAGE_DIRECTORY}/plugins)
