@@ -195,9 +195,6 @@ namespace WPEFramework
             Core::Sink<DSVideoPortNotification>    _DSVideoPortNotification;
             Core::Sink<DSDisplayHotPlugNotification> _DSDisplayHotPlugNotification;
 
-            // Cached HDMI0 video port handle (set in OnDeviceSettingsActivated)
-            int32_t m_videoPortHandle { -1 };
-
             mutable Core::CriticalSection _adminLock;
             PluginHost::IShell *mShell;
             std::list<Exchange::IHdcpProfile::INotification *> _hdcpProfileNotification;
