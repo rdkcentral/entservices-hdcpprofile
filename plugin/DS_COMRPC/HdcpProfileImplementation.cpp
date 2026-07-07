@@ -100,11 +100,15 @@ namespace WPEFramework
                     std::vector<VideoPortEntry> entries;
                     if (_vpConfigStore.BuildVideoPortEntries(entries)) {
                         for (const VideoPortEntry& e : entries) {
-                            int32_t handle = -1;
+                            int32_t handle = INVALID_DS_HANDLE;
                             Core::hresult rc = vp->GetVideoPort(e.type, e.index, handle);
                             if (rc == Core::ERROR_NONE) {
                                 _videoPortHandles[e.name] = handle;
                                 LOGINFO("VideoPort '%s' → handle=%d", e.name.c_str(), handle);
+                            }
+                            else {
+                                LOGERR("GetVideoPort failed for '%s' (type=%d, index=%d), Error: %d",
+                                    e.name.c_str(), e.type, e.index, static_cast<int>(rc));
                             }
                         }
                     }
@@ -113,6 +117,9 @@ namespace WPEFramework
                     vp->Register(&_DSVideoPortNotification);
                     vp->Release();
                     LOGINFO("HdcpProfileImplementation: IDeviceSettingsVideoPort::INotification registered");
+                }
+                else {
+                    LOGWARN("IDeviceSettingsVideoPort not available");
                 }
             }
 
@@ -124,6 +131,9 @@ namespace WPEFramework
                     display->Register(&_DSDisplayHotPlugNotification);
                     display->Release();
                     LOGINFO("HdcpProfileImplementation: IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification registered");
+                }
+                else {
+                    LOGWARN("IDeviceSettingsDisplay not available");
                 }
             }
         }
@@ -349,7 +359,7 @@ namespace WPEFramework
                 // COM-RPC: device::VideoOutputPortConfig::getInstance().getPort("HDMI0")
                 //       → use _videoPortHandles (populated in OnDeviceSettingsActivated)
                 const int32_t videoHandle = getCachedVideoPortHandle(_vpConfigStore.GetDefaultVideoPortName());
-                if (videoHandle < 0) {
+                if (INVALID_DS_HANDLE == videoHandle) {
                     LOGERR("GetHDCPStatusInternal: video port handle not available");
                     return false;
                 }
@@ -362,17 +372,29 @@ namespace WPEFramework
 
                 // COM-RPC: vPort.isDisplayConnected()
                 //       → IDeviceSettingsVideoPort::IsVideoPortDisplayConnected(handle, connected)
-                vp->IsVideoPortDisplayConnected(videoHandle, isConnected);
+                Core::hresult comResult = vp->IsVideoPortDisplayConnected(videoHandle, isConnected);
+                if (comResult != Core::ERROR_NONE) {
+                    LOGERR("IsVideoPortDisplayConnected failed for handle[%d], Error: %d", videoHandle, static_cast<int>(comResult));
+                }
 
                 // COM-RPC: (dsHdcpProtocolVersion_t)vPort.getHDCPProtocol()
                 //       → IDeviceSettingsVideoPort::GetHDCPProtocolVersionOnVideoPort(handle, hdcpVersion)
-                vp->GetHDCPProtocolVersionOnVideoPort(videoHandle, hdcpProtocol);
+                comResult = vp->GetHDCPProtocolVersionOnVideoPort(videoHandle, hdcpProtocol);
+                if (comResult != Core::ERROR_NONE) {
+                    LOGERR("GetHDCPProtocolVersionOnVideoPort failed for handle[%d], Error: %d", videoHandle, static_cast<int>(comResult));
+                }
 
                 // COM-RPC: vPort.getHDCPStatus()
                 //       → IDeviceSettingsVideoPort::GetHDCPStatusOnVideoPort(handle, hdcpStatus)
                 Exchange::IDeviceSettingsVideoPort::HDCPStatus vpHdcpStatus = Exchange::IDeviceSettingsVideoPort::DS_HDCP_STATUS_UNPOWERED;
-                vp->GetHDCPStatusOnVideoPort(videoHandle, vpHdcpStatus);
-                eHDCPEnabledStatus = static_cast<int>(vpHdcpStatus);
+                comResult = vp->GetHDCPStatusOnVideoPort(videoHandle, vpHdcpStatus);
+                if (comResult != Core::ERROR_NONE) {
+                    LOGERR("GetHDCPStatusOnVideoPort failed for handle[%d], Error: %d", videoHandle, static_cast<int>(comResult));
+                }
+                else {
+                    eHDCPEnabledStatus = static_cast<int>(vpHdcpStatus);
+                }
+                vp->Release();
 
                 if(isConnected)
                 {
@@ -382,18 +404,28 @@ namespace WPEFramework
 
                     // COM-RPC: vPort.isContentProtected()
                     //       → IDeviceSettingsVideoPort::IsHDCPEnabledOnVideoPort(handle, hdcpEnabled)
-                    vp->IsHDCPEnabledOnVideoPort(videoHandle, isHDCPEnabled);
+                    comResult = vp->IsHDCPEnabledOnVideoPort(videoHandle, isHDCPEnabled);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("IsHDCPEnabledOnVideoPort failed for handle[%d], Error: %d", videoHandle, static_cast<int>(comResult));
+                    }
 
                     // COM-RPC: (dsHdcpProtocolVersion_t)vPort.getHDCPReceiverProtocol()
                     //       → IDeviceSettingsVideoPort::GetHDCPReceiverProtocolVersionOnVideoPort(handle, hdcpVersion)
-                    vp->GetHDCPReceiverProtocolVersionOnVideoPort(videoHandle, hdcpReceiverProtocol);
+                    comResult = vp->GetHDCPReceiverProtocolVersionOnVideoPort(videoHandle, hdcpReceiverProtocol);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("GetHDCPReceiverProtocolVersionOnVideoPort failed for handle[%d], Error: %d", videoHandle, static_cast<int>(comResult));
+                    }
 
                     // COM-RPC: (dsHdcpProtocolVersion_t)vPort.getHDCPCurrentProtocol()
                     //       → IDeviceSettingsVideoPort::GetHDCPCurrentProtocolVersionOnVideoPort(handle, hdcpVersion)
-                    vp->GetHDCPCurrentProtocolVersionOnVideoPort(videoHandle, hdcpCurrentProtocol);
+                    comResult = vp->GetHDCPCurrentProtocolVersionOnVideoPort(videoHandle, hdcpCurrentProtocol);
+                    if (comResult != Core::ERROR_NONE) {
+                        LOGERR("GetHDCPCurrentProtocolVersionOnVideoPort failed for handle[%d], Error: %d", videoHandle, static_cast<int>(comResult));
+                    }
                 }
                 else
                 {
+                    LOGWARN("Display is not connected, setting isHDCPCompliant and isHDCPEnabled to false");
                     isHDCPCompliant = false;
                     isHDCPEnabled = false;
                 }
@@ -461,10 +493,14 @@ namespace WPEFramework
                 // COM-RPC: (dsHdcpProtocolVersion_t)vPort.getHDCPProtocol()
                 //       → use _videoPortHandles (populated in OnDeviceSettingsActivated)
                 const int32_t videoHandle = getCachedVideoPortHandle(_vpConfigStore.GetDefaultVideoPortName());
-                if (videoHandle >= 0) {
+                if (INVALID_DS_HANDLE != videoHandle) {
                     auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                     if (vp != nullptr) {
-                        vp->GetHDCPProtocolVersionOnVideoPort(videoHandle, hdcpProtocol);
+                        Core::hresult comResult = Core::ERROR_NONE;
+                        comResult = vp->GetHDCPProtocolVersionOnVideoPort(videoHandle, hdcpProtocol);
+                        if (comResult != Core::ERROR_NONE) {
+                            LOGERR("GetHDCPProtocolVersionOnVideoPort failed for handle[%d], Error: %d", videoHandle, static_cast<int>(comResult));
+                        }
                         vp->Release();
                     }
                 }
