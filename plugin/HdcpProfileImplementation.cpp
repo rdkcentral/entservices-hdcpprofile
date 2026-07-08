@@ -266,21 +266,19 @@
                  std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
                  device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(strVideoPort.c_str());
                  isConnected        = vPort.isDisplayConnected();
-                 hdcpProtocol       = dsHDCP_VERSION_1X;
-                 eHDCPEnabledStatus = dsHDCP_STATUS_AUTHENTICATED;
+                 hdcpProtocol       = (dsHdcpProtocolVersion_t)vPort.getHDCPProtocol();
+                 eHDCPEnabledStatus = vPort.getHDCPStatus();
                  if(isConnected)
                  {
                      isHDCPCompliant    = (eHDCPEnabledStatus == dsHDCP_STATUS_AUTHENTICATED);
-                     isHDCPEnabled      = true;
-                     hdcpReceiverProtocol = dsHDCP_VERSION_1X;
-                     hdcpCurrentProtocol  = dsHDCP_VERSION_1X;
+                     isHDCPEnabled      = vPort.isContentProtected();
+                     hdcpReceiverProtocol = (dsHdcpProtocolVersion_t)vPort.getHDCPReceiverProtocol();
+                     hdcpCurrentProtocol  = (dsHdcpProtocolVersion_t)vPort.getHDCPCurrentProtocol();
                  }
                  else
                  {
-                     isHDCPCompliant    = (eHDCPEnabledStatus == dsHDCP_STATUS_AUTHENTICATED);
-                     isHDCPEnabled      = true;
-                     hdcpReceiverProtocol = dsHDCP_VERSION_1X;
-                     hdcpCurrentProtocol  = dsHDCP_VERSION_1X;
+                     isHDCPCompliant = false;
+                     isHDCPEnabled = false;
                  }
              }
              catch (const std::exception& e)
@@ -293,32 +291,32 @@
                 return false;
             }
  
-             hdcpstatus.isConnected = true;
+             hdcpstatus.isConnected = isConnected;
              hdcpstatus.isHDCPCompliant = isHDCPCompliant;
              hdcpstatus.isHDCPEnabled = isHDCPEnabled;
              hdcpstatus.hdcpReason = eHDCPEnabledStatus;
  
-             if(hdcpProtocol == dsHDCP_VERSION_1X)
+             if(hdcpProtocol == dsHDCP_VERSION_2X)
              {
-                 hdcpstatus.supportedHDCPVersion = "1.4";
+                 hdcpstatus.supportedHDCPVersion = "2.2";
              }
              else
              {
                  hdcpstatus.supportedHDCPVersion = "1.4";
              }
  
-             if(hdcpReceiverProtocol == dsHDCP_VERSION_1X)
+             if(hdcpReceiverProtocol == dsHDCP_VERSION_2X)
              {
-                 hdcpstatus.receiverHDCPVersion = "1.4";
+                 hdcpstatus.receiverHDCPVersion = "2.2";
              }
              else
              {
                  hdcpstatus.receiverHDCPVersion = "1.4";
              }
  
-             if(hdcpCurrentProtocol == dsHDCP_VERSION_1X)
+             if(hdcpCurrentProtocol == dsHDCP_VERSION_2X)
              {
-                 hdcpstatus.currentHDCPVersion = "1.4";
+                 hdcpstatus.currentHDCPVersion = "2.2";
              }
              else
              {
