@@ -253,16 +253,78 @@
  
          bool HdcpProfileImplementation::GetHDCPStatusInternal(HDCPStatus& hdcpstatus)
          {
-
-            hdcpstatus.isConnected = true;
-            hdcpstatus.isHDCPCompliant = true;
-            hdcpstatus.isHDCPEnabled = true;
-            hdcpstatus.hdcpReason = dsHDCP_STATUS_AUTHENTICATED;
-            hdcpstatus.supportedHDCPVersion = "1.4";
-            hdcpstatus.receiverHDCPVersion = "1.4";
-            hdcpstatus.currentHDCPVersion = "1.4";
-
-            return true;
+             bool isConnected     = false;
+             bool isHDCPCompliant = false;
+             bool isHDCPEnabled   = true;
+             int eHDCPEnabledStatus   = dsHDCP_STATUS_UNPOWERED;
+             dsHdcpProtocolVersion_t hdcpProtocol = dsHDCP_VERSION_MAX;
+             dsHdcpProtocolVersion_t hdcpReceiverProtocol = dsHDCP_VERSION_MAX;
+             dsHdcpProtocolVersion_t hdcpCurrentProtocol = dsHDCP_VERSION_MAX;
+ 
+             try
+             {
+                 std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
+                 device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(strVideoPort.c_str());
+                 isConnected        = vPort.isDisplayConnected();
+                 hdcpProtocol       = dsHDCP_VERSION_1X;
+                 eHDCPEnabledStatus = dsHDCP_STATUS_AUTHENTICATED;
+                 if(isConnected)
+                 {
+                     isHDCPCompliant    = (eHDCPEnabledStatus == dsHDCP_STATUS_AUTHENTICATED);
+                     isHDCPEnabled      = true;
+                     hdcpReceiverProtocol = dsHDCP_VERSION_1X;
+                     hdcpCurrentProtocol  = dsHDCP_VERSION_1X;
+                 }
+                 else
+                 {
+                     isHDCPCompliant    = (eHDCPEnabledStatus == dsHDCP_STATUS_AUTHENTICATED);
+                     isHDCPEnabled      = true;
+                     hdcpReceiverProtocol = dsHDCP_VERSION_1X;
+                     hdcpCurrentProtocol  = dsHDCP_VERSION_1X;
+                 }
+             }
+             catch (const std::exception& e)
+             {
+                 LOGERR("DS exception [%s] caught\r\n", e.what());
+                 return false;
+             }
+             catch (...) {
+                LOGERR("Failed to getHdcpStatus with unknown exception\n");
+                return false;
+            }
+ 
+             hdcpstatus.isConnected = true;
+             hdcpstatus.isHDCPCompliant = isHDCPCompliant;
+             hdcpstatus.isHDCPEnabled = isHDCPEnabled;
+             hdcpstatus.hdcpReason = eHDCPEnabledStatus;
+ 
+             if(hdcpProtocol == dsHDCP_VERSION_1X)
+             {
+                 hdcpstatus.supportedHDCPVersion = "1.4";
+             }
+             else
+             {
+                 hdcpstatus.supportedHDCPVersion = "1.4";
+             }
+ 
+             if(hdcpReceiverProtocol == dsHDCP_VERSION_1X)
+             {
+                 hdcpstatus.receiverHDCPVersion = "1.4";
+             }
+             else
+             {
+                 hdcpstatus.receiverHDCPVersion = "1.4";
+             }
+ 
+             if(hdcpCurrentProtocol == dsHDCP_VERSION_1X)
+             {
+                 hdcpstatus.currentHDCPVersion = "1.4";
+             }
+             else
+             {
+                 hdcpstatus.currentHDCPVersion = "1.4";
+             }
+             return true;
          }
  
          Core::hresult HdcpProfileImplementation::GetHDCPStatus(HDCPStatus& hdcpstatus,bool& success)
