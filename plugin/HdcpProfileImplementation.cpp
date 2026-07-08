@@ -24,6 +24,7 @@
  #include "videoOutputPort.hpp"
  #include "videoOutputPortConfig.hpp"
  #include "manager.hpp"
+ #include "exception.hpp"
  
  #include "UtilsJsonRpc.h"
  
@@ -263,31 +264,48 @@
  
              try
              {
+                 LOGINFO("GetHDCPStatusInternal: step 1 - getDefaultVideoPortName");
                  std::string strVideoPort = device::Host::getInstance().getDefaultVideoPortName();
+                 LOGINFO("GetHDCPStatusInternal: step 2 - getPort('%s')", strVideoPort.c_str());
                  device::VideoOutputPort vPort = device::VideoOutputPortConfig::getInstance().getPort(strVideoPort.c_str());
-                 isConnected        = vPort.isDisplayConnected();
-                 hdcpProtocol       = (dsHdcpProtocolVersion_t)vPort.getHDCPProtocol();
+                 LOGINFO("GetHDCPStatusInternal: step 3 - isDisplayConnected");
+                 isConnected = vPort.isDisplayConnected();
+                 LOGINFO("GetHDCPStatusInternal: step 4 - getHDCPProtocol, isConnected=%s", isConnected ? "true" : "false");
+                 hdcpProtocol = (dsHdcpProtocolVersion_t)vPort.getHDCPProtocol();
+                 LOGINFO("GetHDCPStatusInternal: step 5 - getHDCPStatus, hdcpProtocol=%d", (int)hdcpProtocol);
                  eHDCPEnabledStatus = vPort.getHDCPStatus();
+                 LOGINFO("GetHDCPStatusInternal: step 6 - eHDCPEnabledStatus=%d, isConnected=%s", eHDCPEnabledStatus, isConnected ? "true" : "false");
                  if(isConnected)
                  {
-                     isHDCPCompliant    = (eHDCPEnabledStatus == dsHDCP_STATUS_AUTHENTICATED);
-                     isHDCPEnabled      = vPort.isContentProtected();
+                     isHDCPCompliant = (eHDCPEnabledStatus == dsHDCP_STATUS_AUTHENTICATED);
+                     LOGINFO("GetHDCPStatusInternal: step 7 - isContentProtected, isHDCPCompliant=%s", isHDCPCompliant ? "true" : "false");
+                     isHDCPEnabled = vPort.isContentProtected();
+                     LOGINFO("GetHDCPStatusInternal: step 8 - getHDCPReceiverProtocol, isHDCPEnabled=%s", isHDCPEnabled ? "true" : "false");
                      hdcpReceiverProtocol = (dsHdcpProtocolVersion_t)vPort.getHDCPReceiverProtocol();
-                     hdcpCurrentProtocol  = (dsHdcpProtocolVersion_t)vPort.getHDCPCurrentProtocol();
+                     LOGINFO("GetHDCPStatusInternal: step 9 - getHDCPCurrentProtocol, hdcpReceiverProtocol=%d", (int)hdcpReceiverProtocol);
+                     hdcpCurrentProtocol = (dsHdcpProtocolVersion_t)vPort.getHDCPCurrentProtocol();
+                     LOGINFO("GetHDCPStatusInternal: step 10 - done connected path, hdcpCurrentProtocol=%d", (int)hdcpCurrentProtocol);
                  }
                  else
                  {
                      isHDCPCompliant = false;
                      isHDCPEnabled = false;
+                     LOGINFO("GetHDCPStatusInternal: step 7 - not connected, skipping receiver/current protocol");
                  }
+                 LOGINFO("GetHDCPStatusInternal: try block completed successfully");
+             }
+             catch (const device::Exception& e)
+             {
+                 LOGERR("GetHDCPStatusInternal: DS device::Exception caught - code=%d message=%s\r\n", e.getCode(), e.what());
+                 return false;
              }
              catch (const std::exception& e)
              {
-                 LOGERR("DS exception [%s] caught\r\n", e.what());
+                 LOGERR("GetHDCPStatusInternal: std::exception caught - %s\r\n", e.what());
                  return false;
              }
              catch (...) {
-                LOGERR("Failed to getHdcpStatus with unknown exception\n");
+                LOGERR("GetHDCPStatusInternal: unknown exception caught\n");
                 return false;
             }
  
