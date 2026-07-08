@@ -87,31 +87,13 @@ namespace WPEFramework
         {
             LOGINFO("HdcpProfileImplementation: OnDeviceSettingsActivated — registering DS notifications");
 
-            // Get video port handles via config store (mirrors displaysettings pattern)
+            // Load video port config and acquire handles in one call, then register for events.
             // COM-RPC: device::VideoOutputPortConfig::getInstance().getPort("HDMI0")
-            //       → LoadVideoPortConfig + BuildVideoPortEntries + GetVideoPort per entry
+            //       → LoadVideoPortConfig populates _vpConfigStore and _videoPortHandles
             {
+                LoadVideoPortConfig(_vpConfigStore);
                 auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
-                    // Load port config once into cached member store (1-arg member fn)
-                    LoadVideoPortConfig(_vpConfigStore);
-
-                    _videoPortHandles.clear();
-                    std::vector<VideoPortEntry> entries;
-                    if (_vpConfigStore.BuildVideoPortEntries(entries)) {
-                        for (const VideoPortEntry& e : entries) {
-                            int32_t handle = INVALID_DS_HANDLE;
-                            Core::hresult rc = vp->GetVideoPort(e.type, e.index, handle);
-                            if (rc == Core::ERROR_NONE) {
-                                _videoPortHandles[e.name] = handle;
-                                LOGINFO("VideoPort '%s' → handle=%d", e.name.c_str(), handle);
-                            }
-                            else {
-                                LOGERR("GetVideoPort failed for '%s' (type=%d, index=%d), Error: %d",
-                                    e.name.c_str(), e.type, e.index, static_cast<int>(rc));
-                            }
-                        }
-                    }
                     // Register for HDCP status change events
                     // COM-RPC: device::Host::Register(IVideoOutputPortEvents) → vp->Register(INotification)
                     vp->Register(&_DSVideoPortNotification);
