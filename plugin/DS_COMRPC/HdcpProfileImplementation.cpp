@@ -376,7 +376,6 @@ namespace WPEFramework
                 else {
                     eHDCPEnabledStatus = static_cast<int>(vpHdcpStatus);
                 }
-                vp->Release();
 
                 if(isConnected)
                 {
