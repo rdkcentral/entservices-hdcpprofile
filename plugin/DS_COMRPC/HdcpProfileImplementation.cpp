@@ -32,6 +32,7 @@
 
 using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
 
+namespace DSHelper = WPEFramework::Plugin::DeviceSettingsClientHelper;
 namespace WPEFramework
 {
     namespace Plugin
@@ -56,7 +57,7 @@ namespace WPEFramework
         {
             LOGINFO("Call HdcpProfileImplementation destructor\n");
             // COM-RPC: notifications are unregistered in OnDeviceSettingsDeactivated()
-            // which is called by DeviceSettingsClientHelper::Close()
+            // which is called by DSHelper::Close()
             if (_powerManagerPlugin) {
                _powerManagerPlugin.Reset();
             }
@@ -87,12 +88,10 @@ namespace WPEFramework
         {
             LOGINFO("HdcpProfileImplementation: OnDeviceSettingsActivated — registering DS notifications");
 
-            // Load video port config and acquire handles in one call, then register for events.
-            // COM-RPC: device::VideoOutputPortConfig::getInstance().getPort("HDMI0")
-            //       → LoadVideoPortConfig populates _vpConfigStore and _videoPortHandles
+            // Config is already loaded by DeviceSettingsClientHelper::Operational(true)
+            // before this override is called. Do NOT call LoadAllConfigs() here.
             {
-                LoadVideoPortConfig(_vpConfigStore);
-                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     // Register for HDCP status change events
                     // COM-RPC: device::Host::Register(IVideoOutputPortEvents) → vp->Register(INotification)
@@ -108,7 +107,7 @@ namespace WPEFramework
             // Register for HDMI hotplug events
             // COM-RPC: device::Host::Register(IDisplayDeviceEvents) → display->Register(IDisplayHDMIHotPlugNotification)
             {
-                auto* display = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                auto* display = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
                 if (display != nullptr) {
                     display->Register(&_DSDisplayHotPlugNotification);
                     display->Release();
@@ -131,22 +130,20 @@ namespace WPEFramework
             LOGINFO("HdcpProfileImplementation: OnDeviceSettingsDeactivated — unregistering DS notifications");
 
             {
-                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
                     vp->Unregister(&_DSVideoPortNotification);
                     vp->Release();
                 }
             }
             {
-                auto* display = AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                auto* display = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
                 if (display != nullptr) {
                     display->Unregister(&_DSDisplayHotPlugNotification);
                     display->Release();
                 }
             }
-
-            _videoPortHandles.clear();
-            _vpConfigStore.Clear();
+            // Port handles are cleared by the base class after OnDeviceSettingsDeactivated() returns.
         }
 
         void HdcpProfileImplementation::onHdmiOutputHotPlug(int connectStatus)
@@ -288,8 +285,8 @@ namespace WPEFramework
             //   device::Host::getInstance().Register(IDisplayDeviceEvents, "WPE::HdcpProfile")
             // OnDeviceSettingsActivated() fires once DeviceSettings is ready,
             // which registers the VideoPort and Display notification delegates.
-            DeviceSettingsClientHelper::Open(service);
-            LOGINFO("HdcpProfileImplementation: DeviceSettingsClientHelper::Open() called");
+            DSHelper::Open(service);
+            LOGINFO("HdcpProfileImplementation: DSHelper::Open() called");
             InitializePowerManager(service);
             return result;
         }
@@ -339,14 +336,19 @@ namespace WPEFramework
             try
             {
                 // COM-RPC: device::VideoOutputPortConfig::getInstance().getPort("HDMI0")
-                //       → use _videoPortHandles (populated in OnDeviceSettingsActivated)
-                const int32_t videoHandle = getCachedVideoPortHandle(_vpConfigStore.GetDefaultVideoPortName());
+                //       → DSHelper::getCachedVideoPortHandle() (populated lazily by _ensureConfigLoaded)
+                std::string portName = DSHelper::getDefaultVideoPortName();
+                if (portName.empty()) {
+                    LOGERR("Default video port name not available");
+                    return false;
+                }
+                const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(portName);
                 if (INVALID_DS_HANDLE == videoHandle) {
                     LOGERR("GetHDCPStatusInternal: video port handle not available");
                     return false;
                 }
 
-                auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp == nullptr) {
                     LOGERR("GetHDCPStatusInternal: IDeviceSettingsVideoPort not available");
                     return false;
@@ -472,17 +474,26 @@ namespace WPEFramework
             try
             {
                 // COM-RPC: (dsHdcpProtocolVersion_t)vPort.getHDCPProtocol()
-                //       → use _videoPortHandles (populated in OnDeviceSettingsActivated)
-                const int32_t videoHandle = getCachedVideoPortHandle(_vpConfigStore.GetDefaultVideoPortName());
-                if (INVALID_DS_HANDLE != videoHandle) {
-                    auto* vp = AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
-                    if (vp != nullptr) {
-                        Core::hresult comResult = Core::ERROR_NONE;
-                        comResult = vp->GetHDCPProtocolVersionOnVideoPort(videoHandle, hdcpProtocol);
-                        if (comResult != Core::ERROR_NONE) {
-                            LOGERR("GetHDCPProtocolVersionOnVideoPort failed for handle[%d], Error: %d", videoHandle, static_cast<int>(comResult));
+                //       → DSHelper::getCachedVideoPortHandle() (populated lazily by _ensureConfigLoaded)
+                std::string portName = DSHelper::getDefaultVideoPortName();
+                if (portName.empty()) {
+                    LOGERR("Default video port name not available");
+                }
+                else {
+                    const int32_t videoHandle = DSHelper::getCachedVideoPortHandle(portName);
+                    if (INVALID_DS_HANDLE != videoHandle) {
+                        auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                        if (vp != nullptr) {
+                            Core::hresult comResult = Core::ERROR_NONE;
+                            comResult = vp->GetHDCPProtocolVersionOnVideoPort(videoHandle, hdcpProtocol);
+                            if (comResult != Core::ERROR_NONE) {
+                                LOGERR("GetHDCPProtocolVersionOnVideoPort failed for handle[%d], Error: %d", videoHandle, static_cast<int>(comResult));
+                            }
+                            vp->Release();
                         }
-                        vp->Release();
+                    }
+                    else {
+                        LOGERR("Video port handle not available for default video port '%s'", portName.c_str());
                     }
                 }
             }
