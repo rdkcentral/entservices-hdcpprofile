@@ -40,7 +40,7 @@ namespace WPEFramework
 
         class HdcpProfileImplementation : public Exchange::IHdcpProfile,
                                           public Exchange::IConfiguration,
-                                          public DeviceSettingsClientHelper
+                                          public DSHelper
         {
         public:
             // We do not allow this plugin to be copied !!
@@ -117,7 +117,7 @@ namespace WPEFramework
             }
 
             // =========================================================================
-            // DeviceSettingsClientHelper overrides
+            // DSHelper overrides
             // Called when entservices-devicesettings plugin activates/deactivates.
             // DS_IARM equivalent: device::Host::Register/UnRegister(IVideoOutputPortEvents, IDisplayDeviceEvents)
             // =========================================================================

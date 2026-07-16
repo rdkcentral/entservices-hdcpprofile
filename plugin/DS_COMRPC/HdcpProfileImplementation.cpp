@@ -32,7 +32,6 @@
 
 using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
 
-namespace DSHelper = WPEFramework::Plugin::DeviceSettingsClientHelper;
 namespace WPEFramework
 {
     namespace Plugin
@@ -79,7 +78,7 @@ namespace WPEFramework
         }
 
         // =========================================================================
-        // DeviceSettingsClientHelper override: called when DeviceSettings activates
+        // DSHelper override: called when DeviceSettings activates
         // DS_IARM equivalent:
         //   device::Host::getInstance().Register(IVideoOutputPortEvents, "WPE::HdcpProfile")
         //   device::Host::getInstance().Register(IDisplayDeviceEvents, "WPE::HdcpProfile")
@@ -88,7 +87,7 @@ namespace WPEFramework
         {
             LOGINFO("HdcpProfileImplementation: OnDeviceSettingsActivated — registering DS notifications");
 
-            // Config is already loaded by DeviceSettingsClientHelper::Operational(true)
+            // Config is already loaded by DSHelper::Operational(true)
             // before this override is called. Do NOT call LoadAllConfigs() here.
             {
                 auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
@@ -120,7 +119,7 @@ namespace WPEFramework
         }
 
         // =========================================================================
-        // DeviceSettingsClientHelper override: called when DeviceSettings deactivates
+        // DSHelper override: called when DeviceSettings deactivates
         // DS_IARM equivalent:
         //   device::Host::getInstance().UnRegister(IVideoOutputPortEvents)
         //   device::Host::getInstance().UnRegister(IDisplayDeviceEvents)
