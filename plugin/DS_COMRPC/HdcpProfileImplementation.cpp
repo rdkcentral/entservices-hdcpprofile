@@ -94,7 +94,7 @@ namespace WPEFramework
                 if (vp != nullptr) {
                     // Register for HDCP status change events
                     // COM-RPC: device::Host::Register(IVideoOutputPortEvents) → vp->Register(INotification)
-                    vp->Register(&_DSVideoPortNotification);
+                    vp->Register("HdcpProfile", &_DSVideoPortNotification);
                     vp->Release();
                     LOGINFO("HdcpProfileImplementation: IDeviceSettingsVideoPort::INotification registered");
                 }
@@ -108,7 +108,7 @@ namespace WPEFramework
             {
                 auto* display = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
                 if (display != nullptr) {
-                    display->Register(&_DSDisplayHotPlugNotification);
+                    display->Register("HdcpProfile", &_DSDisplayHotPlugNotification);
                     display->Release();
                     LOGINFO("HdcpProfileImplementation: IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification registered");
                 }
@@ -156,16 +156,8 @@ namespace WPEFramework
 
         void HdcpProfileImplementation::onHdcpProfileDisplayConnectionChanged()
         {
-            HDCPStatus hdcpstatus;
-            if (true == GetHDCPStatusInternal(hdcpstatus))
-            {
-               dispatchEvent(HDCPPROFILE_EVENT_DISPLAYCONNECTIONCHANGED, hdcpstatus);
-               logHdcpStatus("onHdcpProfileDisplayConnectionChanged", hdcpstatus);
-            }
-            else
-            {
-               LOGERR("Failed to getHdcpStatus");
-            }
+            // Defer all COMRPC work to the worker thread via DispatchJob → Dispatch().
+            dispatchEvent(HDCPPROFILE_EVENT_DISPLAYCONNECTIONCHANGED, HDCPStatus{});
         }
 
         void HdcpProfileImplementation::logHdcpStatus(const char *trigger, HDCPStatus& status)
@@ -193,26 +185,10 @@ namespace WPEFramework
             onHdcpProfileDisplayConnectionChanged();
         }
 
-        // DS_IARM equivalent: HdcpProfileImplementation::OnHDCPStatusChange(dsHdcpStatus_t)
-        // Preserves the power state check from the DS_IARM implementation.
         void HdcpProfileImplementation::onHdcpStatusChangeNotification(int hdcpStatus)
         {
-            uint32_t res = Core::ERROR_GENERAL;
-            PowerState pwrStateCur = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
-            PowerState pwrStatePrev = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
-
-            HdcpProfileImplementation* instance = HdcpProfileImplementation::_instance;
-
-            ASSERT (_powerManagerPlugin);
-            if (_powerManagerPlugin && instance){
-                res = _powerManagerPlugin->GetPowerState(pwrStateCur, pwrStatePrev);
-                if (Core::ERROR_NONE != res)
-                {
-                    LOGWARN("Failed to Invoke RPC method: GetPowerState");
-                }
-                LOGINFO("Received OnHDCPStatusChange  event data:%d  param.curState: %d \r\n", hdcpStatus, pwrStateCur);
-                instance->onHdmiOutputHDCPStatusEvent(hdcpStatus);
-            }
+            LOGINFO("Received OnHDCPStatusChange event data:%d", hdcpStatus);
+            dispatchEvent(HDCPPROFILE_EVENT_DISPLAYCONNECTIONCHANGED, HDCPStatus{});
         }
 
         /**
@@ -295,29 +271,33 @@ namespace WPEFramework
             Core::IWorkerPool::Instance().Submit(DispatchJob::Create(this, event, hdcpstatus));
         }
 
-        void HdcpProfileImplementation::Dispatch(Event event, const HDCPStatus& hdcpstatus)
+        void HdcpProfileImplementation::Dispatch(Event event, const HDCPStatus& /*unused*/)
         {
-            _adminLock.Lock();
-
-            std::list<Exchange::IHdcpProfile::INotification *>::const_iterator index(_hdcpProfileNotification.begin());
-
             switch (event)
             {
                 case HDCPPROFILE_EVENT_DISPLAYCONNECTIONCHANGED:
                 {
+                    // Gather HDCP status here on the worker thread (COMRPC-safe).
+                    HDCPStatus hdcpstatus;
+                    if (!GetHDCPStatusInternal(hdcpstatus)) {
+                        LOGERR("Failed to getHdcpStatus");
+                        return;
+                    }
+                    logHdcpStatus("Dispatch", hdcpstatus);
+                    _adminLock.Lock();
+                    std::list<Exchange::IHdcpProfile::INotification *>::const_iterator index(_hdcpProfileNotification.begin());
                     while (index != _hdcpProfileNotification.end())
                     {
                         (*index)->OnDisplayConnectionChanged(hdcpstatus);
                         ++index;
                     }
+                    _adminLock.Unlock();
+                    break;
                 }
-                break;
-
-            default:
-                LOGWARN("Event[%u] not handled", event);
-                break;
+                default:
+                    LOGWARN("Event[%u] not handled", event);
+                    break;
             }
-            _adminLock.Unlock();
         }
 
         bool HdcpProfileImplementation::GetHDCPStatusInternal(HDCPStatus& hdcpstatus)
