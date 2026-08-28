@@ -260,8 +260,7 @@ namespace WPEFramework
             //   device::Host::getInstance().Register(IDisplayDeviceEvents, "WPE::HdcpProfile")
             // OnDeviceSettingsActivated() fires once DeviceSettings is ready,
             // which registers the VideoPort and Display notification delegates.
-            DSHelper::Open(service);
-            LOGINFO("HdcpProfileImplementation: DSHelper::Open() called");
+            DSHelper::Open(service, "HdcpProfile");
             InitializePowerManager(service);
             return result;
         }
