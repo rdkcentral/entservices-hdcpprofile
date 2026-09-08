@@ -69,9 +69,6 @@ else ()
 target_link_libraries(${PLUGIN_IMPLEMENTATION} PRIVATE ${NAMESPACE}Protocols::${NAMESPACE}Protocols)
 endif (USE_THUNDER_R4)
 
-find_package(DS)
-find_package(CEC)
-
 if (RDK_SERVICE_L2_TEST)
     message ("L2 test Enabled")
     find_library(TESTMOCKLIB_LIBRARIES NAMES TestMocklib)
@@ -84,12 +81,10 @@ if (RDK_SERVICE_L2_TEST)
 endif()
 
 
-target_include_directories(${PLUGIN_IMPLEMENTATION} PRIVATE ${DS_INCLUDE_DIRS})
-
-
 set_source_files_properties(HdcpProfile.cpp PROPERTIES COMPILE_FLAGS "-fexceptions")
 
-target_link_libraries(${PLUGIN_IMPLEMENTATION} PUBLIC ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${DS_LIBRARIES} ${NAMESPACE}::${NAMESPACE}Helpers)
+target_link_libraries(${PLUGIN_IMPLEMENTATION} PUBLIC ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${NAMESPACE}::${NAMESPACE}Helpers)
+target_link_libraries(${MODULE_NAME} PUBLIC ${NAMESPACE}Plugins::${NAMESPACE}Plugins ${NAMESPACE}::${NAMESPACE}Helpers)
 
 install(TARGETS ${PLUGIN_IMPLEMENTATION}
         DESTINATION lib/${STORAGE_DIRECTORY}/plugins)
