@@ -55,6 +55,10 @@ install(TARGETS ${MODULE_NAME}
 add_library(${PLUGIN_IMPLEMENTATION} SHARED
         HdcpProfileImplementation.cpp
         Module.cpp)
+
+target_include_directories(${PLUGIN_IMPLEMENTATION} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR})
+
 target_link_libraries(${PLUGIN_IMPLEMENTATION}
         PRIVATE
         ${NAMESPACE}Plugins::${NAMESPACE}Plugins)
