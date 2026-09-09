@@ -47,7 +47,7 @@ cd Thunder
 git checkout $THUNDER_COMMIT_SHA
 cd ..
 
-git clone --branch develop https://github.com/rdkcentral/entservices-apis.git
+git clone --branch feature/RDKEMW-6078_DSPlugin_Interface https://github.com/rdkcentral/entservices-apis.git
 
 cd ..
 git clone --branch topic/RDKEMW-20051_dsPlugin_helper https://github.com/rdkcentral/entservices-helpers.git
