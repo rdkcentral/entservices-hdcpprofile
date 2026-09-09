@@ -427,8 +427,9 @@ TEST_F(HDCPProfileEventIarmTest, onDisplayConnectionChanged)
 
     EVENT_SUBSCRIBE(0, _T("onDisplayConnectionChanged"), _T("client.events"), message);
 
-    Plugin::HdcpProfileImplementation::_instance->OnDisplayHDMIHotPlug(dsDISPLAY_EVENT_CONNECTED);
-
+    //Plugin::HdcpProfileImplementation::_instance->OnDisplayHDMIHotPlug(dsDISPLAY_EVENT_CONNECTED);
+    Plugin::HdcpProfileImplementation::instance()->onHdmiOutputHotPlug(dsDISPLAY_EVENT_CONNECTED);
+    
     EXPECT_EQ(Core::ERROR_NONE, onDisplayConnectionChanged.Lock());
 
     EVENT_UNSUBSCRIBE(0, _T("onDisplayConnectionChanged"), _T("client.events"), message);
