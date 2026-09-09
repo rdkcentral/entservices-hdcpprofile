@@ -492,7 +492,7 @@ TEST_F(HDCPProfileEventIarmTest, onHdmiOutputHDCPStatusEvent)
 
     EVENT_SUBSCRIBE(0, _T("onDisplayConnectionChanged"), _T("client.events"), message);
 
-    Plugin::HdcpProfileImplementation::_instance->OnHDCPStatusChange(dsHDCP_STATUS_AUTHENTICATED);
+    Plugin::HdcpProfileImplementation::instance()->onHdcpStatusChangeNotification(dsHDCP_STATUS_AUTHENTICATED);
 
     EXPECT_EQ(Core::ERROR_NONE, onDisplayConnectionChanged.Lock());
 
