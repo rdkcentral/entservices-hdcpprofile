@@ -355,7 +355,7 @@ jobs:
         with:
           repository: rdkcentral/entservices-helpers
           path: entservices-helpers
-          ref: develop
+          ref: topic/RDKEMW-20051_dsPlugin_helper
 
       - name: Build entservices-helpers
         run: >
