@@ -184,7 +184,7 @@ jobs:
         with:
           repository: rdkcentral/entservices-apis
           path: entservices-apis
-          ref: ${{env.INTERFACES_REF}}
+          ref: feature/RDKEMW-6078_DSPlugin_Interface
           run: rm -rf $GITHUB_WORKSPACE/entservices-apis/jsonrpc/DTV.json
 
 
@@ -314,7 +314,7 @@ jobs:
         with:
           repository: rdkcentral/entservices-helpers
           path: entservices-helpers
-          ref: develop
+          ref: topic/RDKEMW-20051_dsPlugin_helper
 
       - name: Build entservices-helpers
         run: >
