@@ -116,6 +116,27 @@ jobs:
           path: googletest
           ref: v1.15.0
 
+      # HdcpProfile now talks to DeviceSettings over COM-RPC. The real entservices-devicesettings
+      # plugin is built and activated in the L2 test so HDCP status queries and events
+      # exercise the genuine plugin-to-plugin COM-RPC path; its dsVideoPort/dsDisplay HAL calls
+      # are satisfied by the ds-hal GTest stub below instead of real hardware.
+      - name: Checkout entservices-devicesettings
+        uses: actions/checkout@v3
+        with:
+          repository: rdkcentral/entservices-devicesettings
+          path: entservices-devicesettings
+          ref: topic/RDKEMW-25013
+
+      # dsTypes.h/dsVideoPort.h/dsDisplay.h HAL header contract (not the legacy libds/IARM
+      # implementation, which entservices-devicesettings no longer depends on).
+      # Using stable tag 6.0.1 to avoid breaking changes from main branch
+      - name: Checkout rdk-halif-device_settings
+        uses: actions/checkout@v3
+        with:
+          repository: rdkcentral/rdk-halif-device_settings
+          path: rdk-halif-device_settings
+          ref: 6.0.1
+
       - name: Build ThunderTools
         run: >
           cmake
@@ -188,7 +209,6 @@ jobs:
           &&
           mkdir -p
           headers
-          headers/rdk/ds
           headers/rdk/iarmbus
           headers/rdk/iarmmgrs-hal
           headers/systemservices
@@ -199,37 +219,31 @@ jobs:
           cd headers
           &&
           touch
-          rdk/ds/host.hpp
-          rdk/ds/videoOutputPort.hpp
-          rdk/ds/videoOutputPortType.hpp
-          rdk/ds/videoOutputPortConfig.hpp
-          rdk/ds/videoResolution.hpp
-          rdk/ds/audioOutputPort.hpp
-          rdk/ds/audioOutputPortType.hpp
-          rdk/ds/sleepMode.hpp
-          rdk/ds/frontPanelConfig.hpp
-          rdk/ds/frontPanelTextDisplay.hpp
-          rdk/ds/hdmiIn.hpp
-          rdk/ds/compositeIn.hpp
-          rdk/ds/audioOutputPortConfig.hpp
-          rdk/ds/exception.hpp
-          rdk/ds/dsError.h
-          rdk/ds/dsMgr.h
-          rdk/ds/manager.hpp
-          rdk/ds/dsTypes.h
-          rdk/ds/dsUtl.h
-          rdk/ds/audioOutputPortType.hpp
-          rdk/ds/audioOutputPortConfig.hpp
-          rdk/ds/pixelResolution.hpp
+          ccec/drivers/CecIARMBusMgr.h
+          ccec/FrameListener.hpp
+          ccec/Connection.hpp
+          ccec/Assert.hpp
+          ccec/Messages.hpp
+          ccec/MessageDecoder.hpp
+          ccec/MessageProcessor.hpp
+          ccec/CECFrame.hpp
+          ccec/CCEC.hpp
+          ccec/MessageEncoder.hpp
+          ccec/host/RDK.hpp
           rdk/iarmbus/libIARM.h
           rdk/iarmbus/libIBus.h
           rdk/iarmbus/libIBusDaemon.h
           rdk/iarmmgrs-hal/mfrMgr.h
+          rdk/iarmmgrs-hal/pwrMgr.h
           rdk/iarmmgrs-hal/sysMgr.h
           rdk/iarmbus/iarmUtil.h
           rfcapi.h
           rbus.h
           libudev.h
+          libusb.h
+          drm.h
+          drm_mode.h
+          essos-resmgr.h
           systemservices/proc/readproc.h
           systemservices/secure_wrapper.h
           systemaudioplatform.h
@@ -245,22 +259,7 @@ jobs:
           tvSettingsODM.h
           tvTypesODM.h
           tr181api.h
-          list.hpp
-          dsDisplay.h
-          rdk/ds/AudioStereoMode.hpp
-          rdk/ds/VideoDFC.hpp
-          dsRpc.h
-          ccec/drivers/CecIARMBusMgr.h
-          ccec/FrameListener.hpp
-          ccec/Connection.hpp
-          ccec/Assert.hpp
-          ccec/Messages.hpp
-          ccec/MessageDecoder.hpp
-          ccec/MessageProcessor.hpp
-          ccec/CECFrame.hpp
-          ccec/CCEC.hpp
-          ccec/MessageEncoder.hpp
-          ccec/host/RDK.hpp
+          telemetry_busmessage_sender.h
           &&
           cp -r /usr/include/gstreamer-1.0/gst /usr/include/glib-2.0/* /usr/lib/x86_64-linux-gnu/glib-2.0/include/* /usr/local/include/trower-base64/base64.h /usr/include/libdrm/drm.h /usr/include/libdrm/drm_mode.h /usr/include/xf86drm.h .
 
@@ -289,6 +288,27 @@ jobs:
           cmake --build build/googletest -j8
           &&
           cmake --install build/googletest
+
+      - name: Copy DeviceSettings HAL headers
+        run: >
+          mkdir -p "$GITHUB_WORKSPACE/install/usr/include"
+          &&
+          cp -r "$GITHUB_WORKSPACE/rdk-halif-device_settings/include/." "$GITHUB_WORKSPACE/install/usr/include/"
+
+      # GTest-controllable stand-in for libds-hal (see DsVideoPortHalMock.h, DsDisplayHalMock.h).
+      # Must be installed before building entservices-devicesettings so find_library(NAMES ds-hal)
+      # resolves to this instead of requiring real hardware HAL.
+      - name: Build ds-hal stub
+        run: >
+          cmake
+          -S "$GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/devicesettings"
+          -B build/ds-hal
+          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr"
+          -DCMAKE_CXX_FLAGS="-I $GITHUB_WORKSPACE/install/usr/include"
+          &&
+          cmake --build build/ds-hal -j8
+          &&
+          cmake --install build/ds-hal
 
       - name: Build mocks
         run: >
@@ -378,6 +398,46 @@ jobs:
           &&
           cmake --install build/entservices-helpers
 
+      - name: Build entservices-devicesettings
+        run: >
+          cmake
+          -S "$GITHUB_WORKSPACE/entservices-devicesettings"
+          -B build/entservices-devicesettings
+          -DCMAKE_TOOLCHAIN_FILE="${{ env.TOOLCHAIN_FILE }}"
+          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr"
+          -DCMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/tools/cmake"
+          -DHIDE_NON_EXTERNAL_SYMBOLS=OFF
+          -DCMAKE_CXX_FLAGS="
+          -DEXCEPTIONS_ENABLE=ON
+          -DUSE_THUNDER_R4=ON
+          -DTHUNDER_VERSION=4
+          -DTHUNDER_VERSION_MAJOR=4
+          -DTHUNDER_VERSION_MINOR=4
+          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers
+          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/rdk/iarmbus
+          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/rdk/iarmmgrs-hal
+          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks
+          -I $GITHUB_WORKSPACE/install/usr/include
+          -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/Iarm.h
+          -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/Rfc.h
+          -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/RBus.h
+          -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/Telemetry.h
+          -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/Wraps.h
+          -Werror -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format=
+          -DUSE_DS"
+          -DCOMCAST_CONFIG=OFF
+          -DCMAKE_DISABLE_FIND_PACKAGE_IARMBus=ON
+          -DDS_FOUND=ON
+          -DPLUGIN_DEVICESETTINGS=ON
+          -DPLUGIN_DEVICESETTINGS_MODE=Off
+          -DUSE_THUNDER_R4=ON
+          -DRDK_SERVICE_L2_TEST=ON
+          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+          &&
+          cmake --build build/entservices-devicesettings -j8
+          &&
+          cmake --install build/entservices-devicesettings
+
       - name: Build entservices-hdcpprofile
         run: >
           cmake
@@ -398,16 +458,14 @@ jobs:
           -DPLUGIN_PERSISTENTSTORE_PATH="/tmp/secure/persistent/rdkservicestore"
           -DPLUGIN_PERSISTENTSTORE_LEGACYPATH="/tmp/persistent/rdkservicestore"
           -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers
-          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/rdk/ds
           -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/rdk/iarmbus
           -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/rdk/iarmmgrs-hal
           -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/systemservices
           -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/systemservices/proc
+          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/ccec/drivers
           -I $GITHUB_WORKSPACE/install/usr/include
           -I $GITHUB_WORKSPACE/install/usr/include/WPEFramework
           -I $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks
-          -I $GITHUB_WORKSPACE/entservices-testframework/Tests/headers/ccec/drivers
-          -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/devicesettings.h
           -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/Iarm.h
           -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/Rfc.h
           -include $GITHUB_WORKSPACE/entservices-testframework/Tests/mocks/RBus.h

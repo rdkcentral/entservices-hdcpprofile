@@ -145,15 +145,6 @@ namespace WPEFramework
             // Port handles are cleared by the base class after OnDeviceSettingsDeactivated() returns.
         }
 
-        void HdcpProfileImplementation::onHdmiOutputHotPlug(int connectStatus)
-        {
-            if (HDMI_HOT_PLUG_EVENT_CONNECTED == connectStatus)
-            {
-                LOGINFO("HDMI_HOT_PLUG Status[%d]",connectStatus);
-            }
-            onHdcpProfileDisplayConnectionChanged();
-        }
-
         void HdcpProfileImplementation::onHdcpProfileDisplayConnectionChanged()
         {
             // Defer all COMRPC work to the worker thread via DispatchJob → Dispatch().
@@ -183,12 +174,6 @@ namespace WPEFramework
         {
             LOGINFO("hdcpStatus[%d]",hdcpStatus);
             onHdcpProfileDisplayConnectionChanged();
-        }
-
-        void HdcpProfileImplementation::onHdcpStatusChangeNotification(int hdcpStatus)
-        {
-            LOGINFO("Received OnHDCPStatusChange event data:%d", hdcpStatus);
-            dispatchEvent(HDCPPROFILE_EVENT_DISPLAYCONNECTIONCHANGED, HDCPStatus{});
         }
 
         /**
@@ -495,6 +480,30 @@ namespace WPEFramework
 
             success = true;
             return Core::ERROR_NONE;
+        }
+
+        // =========================================================================
+        // Public methods called by both:
+        // 1. DeviceSettings notification delegates (DSDisplayHotPlugNotification, DSVideoPortNotification)
+        // 2. L1 unit tests for direct event simulation
+        // =========================================================================
+        void HdcpProfileImplementation::OnDisplayHDMIHotPlug(int displayEvent)
+        {
+            // Called when HDMI display is connected/disconnected
+            // displayEvent: 0=CONNECTED, 1=DISCONNECTED
+            if (HDMI_HOT_PLUG_EVENT_CONNECTED == displayEvent)
+            {
+                LOGINFO("HDMI_HOT_PLUG Status[%d]", displayEvent);
+            }
+            onHdcpProfileDisplayConnectionChanged();
+        }
+
+        void HdcpProfileImplementation::OnHDCPStatusChange(int hdcpStatus)
+        {
+            // Called when HDCP authentication status changes
+            // hdcpStatus: 0=UNPOWERED, 1=UNAUTHENTICATED, 2=AUTHENTICATED, etc.
+            LOGINFO("Received OnHDCPStatusChange event data:%d", hdcpStatus);
+            dispatchEvent(HDCPPROFILE_EVENT_DISPLAYCONNECTIONCHANGED, HDCPStatus{});
         }
 
     } // namespace Plugin

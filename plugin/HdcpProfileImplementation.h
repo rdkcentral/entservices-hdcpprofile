@@ -131,9 +131,7 @@ namespace WPEFramework
             Core::hresult GetSettopHDCPSupport(string& supportedHDCPVersion, bool& isHDCPSupported, bool& success) override;
             bool GetHDCPStatusInternal(HDCPStatus& hdcpstatus);
             void InitializePowerManager(PluginHost::IShell *service);
-            void onHdmiOutputHotPlug(int connectStatus);
             void onHdmiOutputHDCPStatusEvent(int hdcpStatus);
-            void onHdcpStatusChangeNotification(int hdcpStatus);  // mirrors DS_IARM OnHDCPStatusChange power-state check
             void logHdcpStatus(const char *trigger, HDCPStatus& status);
             void onHdcpProfileDisplayConnectionChanged();
             static PowerManagerInterfaceRef _powerManagerPlugin;
@@ -153,8 +151,8 @@ namespace WPEFramework
 
                 void OnHDCPStatusChange(const Exchange::IDeviceSettingsVideoPort::HDCPStatus hdcpStatus) override {
                     // COM-RPC: maps to DS_IARM OnHDCPStatusChange(dsHdcpStatus_t)
-                    // Preserves the power state check via onHdcpStatusChangeNotification()
-                    _parent.onHdcpStatusChangeNotification(static_cast<int>(hdcpStatus));
+                    // Calls public method which can also be invoked directly from L1 tests
+                    _parent.OnHDCPStatusChange(static_cast<int>(hdcpStatus));
                 }
                 void OnResolutionPostChange(const Exchange::IDeviceSettingsVideoPort::ResolutionChange&) override {}
                 void OnResolutionPreChange(const Exchange::IDeviceSettingsVideoPort::ResolutionChange&) override {}
@@ -181,7 +179,8 @@ namespace WPEFramework
                 void OnDisplayHDMIHotPlug(const Exchange::IDeviceSettingsDisplay::DisplayEvent displayEvent) override {
                     // COM-RPC: DS_DISPLAY_EVENT_CONNECTED=0, DS_DISPLAY_EVENT_DISCONNECTED=1
                     // matches DS_IARM: dsDISPLAY_EVENT_CONNECTED=0, dsDISPLAY_EVENT_DISCONNECTED=1
-                    _parent.onHdmiOutputHotPlug(static_cast<int>(displayEvent));
+                    // Calls public method which can also be invoked directly from L1 tests
+                    _parent.OnDisplayHDMIHotPlug(static_cast<int>(displayEvent));
                 }
 
                 BEGIN_INTERFACE_MAP(DSDisplayHotPlugNotification)
@@ -203,6 +202,11 @@ namespace WPEFramework
             void Dispatch(Event event, const HDCPStatus &params);
 
         public:
+            // Called from notification delegate inner classes; public for direct test invocation (see L1 tests).
+            // These methods allow L1 tests to simulate DeviceSettings events without full COM-RPC setup.
+            void OnDisplayHDMIHotPlug(int displayEvent);
+            void OnHDCPStatusChange(int hdcpStatus);
+
             static HdcpProfileImplementation *_instance;
         };
 

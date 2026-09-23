@@ -1,8 +1,8 @@
-/*
- * If not stated otherwise in this file or this component's LICENSE file the
- * following copyright and licenses apply:
+/**
+ * If not stated otherwise in this file or this component's LICENSE
+ * file the following copyright and licenses apply:
  *
- * Copyright 2026 RDK Management
+ * Copyright 2025 RDK Management
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,56 +15,82 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ **/
+
+#include <gtest/gtest.h>
+#include <gmock/gmock.h>
 #include "L2Tests.h"
 #include "L2TestsMock.h"
+#include <mutex>
 #include <condition_variable>
 #include <fstream>
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include <cstring>
 #include <interfaces/IHdcpProfile.h>
-#include <interfaces/IPowerManager.h>
 
+// HdcpProfile now talks to the real org.rdk.DeviceSettings plugin over COM-RPC.
+// HAL mocks stand in for libds-hal so this test can control DeviceSettings behavior
+// Note: HAL mocks (DsVideoPort, DsDisplay, DsHost) are automatically provided by L2TestsMock
+
+#define JSON_TIMEOUT (1000)
+#define COM_TIMEOUT (100)
 #define EVNT_TIMEOUT (5000)
-#define HDCPPROFILE_CALLSIGN _T("org.rdk.HdcpProfile.1")
-#define HDCPPROFILE_L2TEST_CALLSIGN _T("L2tests.1")
-
 #define TEST_LOG(x, ...)                                                                                                                         \
     fprintf(stderr, "\033[1;32m[%s:%d](%s)<PID:%d><TID:%d>" x "\n\033[0m", __FILE__, __LINE__, __FUNCTION__, getpid(), gettid(), ##__VA_ARGS__); \
     fflush(stderr);
+#define HDCPPROFILE_CALLSIGN _T("org.rdk.HdcpProfile.1")
+#define HDCPPROFILE_L2TEST_CALLSIGN _T("L2tests.1")
 
 using ::testing::NiceMock;
 using namespace WPEFramework;
 using testing::StrictMock;
-using HDCPStatus = WPEFramework::Exchange::IHdcpProfile::HDCPStatus;
-using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
+using ::WPEFramework::Exchange::IHdcpProfile;
 
-// Event flags for different HDCP events
 typedef enum : uint32_t {
-    ON_DISPLAY_CONNECTION_CHANGED = 0x00000001,
-    HDCPPROFILE_STATUS_INVALID = 0x00000000
+    HdcpProfile_OnDisplayConnectionChanged = 0x00000001,
+    HdcpProfile_StateInvalid = 0x00000000
 } HdcpProfileL2test_async_events_t;
 
-// Notification handler for HdcpProfile events
+/**
+ * @brief Internal test mock class
+ *
+ * Note that this is for internal test use only and doesn't mock any actual
+ * concrete interface.
+ */
+class AsyncHandlerMock_HdcpProfile {
+public:
+    AsyncHandlerMock_HdcpProfile() {
+    }
+    MOCK_METHOD(void, onDisplayConnectionChanged, (const IHdcpProfile::HDCPStatus& hdcpStatus));
+};
+
+/* Notification Handler Class for COM-RPC*/
 class HdcpProfileNotificationHandler : public Exchange::IHdcpProfile::INotification {
 private:
+    /** @brief Mutex */
     std::mutex m_mutex;
+
+    /** @brief Condition variable */
     std::condition_variable m_condition_variable;
+
+    /** @brief Event signalled flag */
     uint32_t m_event_signalled;
+
+    /** @brief Last received HDCP status */
+    IHdcpProfile::HDCPStatus m_lastHdcpStatus;
 
     BEGIN_INTERFACE_MAP(Notification)
     INTERFACE_ENTRY(Exchange::IHdcpProfile::INotification)
     END_INTERFACE_MAP
 
 public:
-    HdcpProfileNotificationHandler()
-        : m_event_signalled(HDCPPROFILE_STATUS_INVALID)
-    {
-    }
+    HdcpProfileNotificationHandler() : m_event_signalled(HdcpProfile_StateInvalid) {}
+    ~HdcpProfileNotificationHandler() {}
 
-    void onDisplayConnectionChanged(const HDCPStatus& hdcpStatus)
-    {
-        TEST_LOG("OnDisplayConnectionChanged notification received");
+    void onDisplayConnectionChanged(const IHdcpProfile::HDCPStatus& hdcpStatus) override {
+        TEST_LOG("onDisplayConnectionChanged event triggered ***\n");
+        std::unique_lock<std::mutex> lock(m_mutex);
+
+        m_lastHdcpStatus = hdcpStatus;
         TEST_LOG("  isConnected: %d", hdcpStatus.isConnected);
         TEST_LOG("  isHDCPCompliant: %d", hdcpStatus.isHDCPCompliant);
         TEST_LOG("  isHDCPEnabled: %d", hdcpStatus.isHDCPEnabled);
@@ -73,189 +99,248 @@ public:
         TEST_LOG("  receiverHDCPVersion: %s", hdcpStatus.receiverHDCPVersion.c_str());
         TEST_LOG("  currentHDCPVersion: %s", hdcpStatus.currentHDCPVersion.c_str());
 
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_event_signalled |= ON_DISPLAY_CONNECTION_CHANGED;
-        m_lastHdcpStatus = hdcpStatus;
+        /* Notify the requester thread. */
+        m_event_signalled |= HdcpProfile_OnDisplayConnectionChanged;
         m_condition_variable.notify_one();
     }
 
-    uint32_t WaitForEvent(uint32_t timeout_ms, HdcpProfileL2test_async_events_t expected_status)
-    {
+    uint32_t WaitForRequestStatus(uint32_t timeout_ms, HdcpProfileL2test_async_events_t expected_status) {
         std::unique_lock<std::mutex> lock(m_mutex);
         auto now = std::chrono::system_clock::now();
-        
-        if (m_condition_variable.wait_until(lock, now + std::chrono::milliseconds(timeout_ms), 
-            [this, expected_status]() { return (m_event_signalled & expected_status) != 0; })) {
-            return m_event_signalled;
+        std::chrono::milliseconds timeout(timeout_ms);
+        uint32_t signalled = HdcpProfile_StateInvalid;
+
+        while (!(expected_status & m_event_signalled)) {
+            if (m_condition_variable.wait_until(lock, now + timeout) == std::cv_status::timeout) {
+                TEST_LOG("Timeout waiting for request status event");
+                break;
+            }
         }
-        
-        TEST_LOG("Timeout waiting for event 0x%08X, got 0x%08X", expected_status, m_event_signalled);
-        return HDCPPROFILE_STATUS_INVALID;
+        signalled = m_event_signalled;
+        return signalled;
     }
 
-    void ResetEvent()
-    {
+    void ResetEvent() {
         std::unique_lock<std::mutex> lock(m_mutex);
-        m_event_signalled = HDCPPROFILE_STATUS_INVALID;
+        m_event_signalled = HdcpProfile_StateInvalid;
     }
 
-    HDCPStatus GetLastHdcpStatus()
-    {
+    IHdcpProfile::HDCPStatus GetLastHdcpStatus() {
         std::unique_lock<std::mutex> lock(m_mutex);
         return m_lastHdcpStatus;
     }
+};
+
+/* HdcpProfile L2 test class declaration */
+class HdcpProfile_L2test : public L2TestMocks {
+protected:
+    Core::JSONRPC::Message message;
+    string response;
+
+    virtual ~HdcpProfile_L2test() override;
+
+public:
+    HdcpProfile_L2test();
+    
+    // Captured from HAL callbacks - used to simulate HAL events
+    dsHdcpStatusCallback_t m_dsHdcpStatusCallback = nullptr;
+    dsHdmiHotPlugEventCallback_t m_dsHdmiHotPlugCallback = nullptr;
+    
+    // HAL Mocks are now provided by L2TestsMock parent class:
+    // - p_dsVideoPortHalMock
+    // - p_dsDisplayHalMock
+    // - p_dsHostHalMock
+    // - p_telemetryApiImplMock
+    
+    uint32_t CreateHdcpProfileInterfaceObjectUsingComRPCConnection();
+
+    /**
+     * @brief waits for various status change on asynchronous calls
+     */
+    uint32_t WaitForRequestStatus(uint32_t timeout_ms, HdcpProfileL2test_async_events_t expected_status);
 
 private:
-    HDCPStatus m_lastHdcpStatus;
+    /** @brief Mutex */
+    std::mutex m_mutex;
+
+    /** @brief Condition variable */
+    std::condition_variable m_condition_variable;
+
+    /** @brief Event signalled flag */
+    uint32_t m_event_signalled;
+
+protected:
+    /** @brief Pointer to the IShell interface */
+    PluginHost::IShell *m_controller_HdcpProfile;
+
+    /** @brief Pointer to the IHdcpProfile interface */
+    Exchange::IHdcpProfile *m_HdcpProfileplugin;
+
+    Core::Sink<HdcpProfileNotificationHandler> notify;
 };
 
-class AsyncHandlerMock_HdcpProfile {
-public:
-    AsyncHandlerMock_HdcpProfile()
-    {
+/**
+ * @brief Constructor for HdcpProfile L2 test class
+ */
+HdcpProfile_L2test::HdcpProfile_L2test()
+    : L2TestMocks() {
+    uint32_t status = Core::ERROR_GENERAL;
+    m_event_signalled = HdcpProfile_StateInvalid;
+
+    // TelemetryApi mock is already registered by L2TestMocks (p_telemetryApiImplMock);
+    // calling TelemetryApi::setImpl() again here would fail the (nullptr == impl) guard.
+    ON_CALL(*p_telemetryApiImplMock, t2_init(::testing::_)).WillByDefault(::testing::Return());
+    ON_CALL(*p_telemetryApiImplMock, t2_uninit()).WillByDefault(::testing::Return());
+    ON_CALL(*p_telemetryApiImplMock, t2_event_s(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Return(T2ERROR_SUCCESS));
+    ON_CALL(*p_telemetryApiImplMock, t2_event_d(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Return(T2ERROR_SUCCESS));
+    ON_CALL(*p_telemetryApiImplMock, t2_event_f(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Return(T2ERROR_SUCCESS));
+    TEST_LOG("TelemetryApi mock initialized");
+
+    // Configure HdcpProfile-specific HAL mock behaviors
+    // Note: Common Init/Term behaviors are already set up by L2TestsMock
+    // HdcpProfile plugin uses IDeviceSettingsVideoPort and IDeviceSettingsDisplay interfaces
+    // So we need VideoPort, Display, and Host HAL mocks
+    
+    // 1. Host HAL Mock - Default video port name
+    ON_CALL(*p_dsHostHalMock, dsGetDefaultVideoPortName(::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](dsVideoPortType_t* portType) {
+                if (portType) { *portType = dsVIDEOPORT_TYPE_HDMI; }
+                return dsERR_NONE;
+            }));
+    TEST_LOG("DsHostApi HdcpProfile-specific behaviors configured");
+    
+    // 2. VideoPort HAL Mock - HDCP functionality
+    ON_CALL(*p_dsVideoPortHalMock, dsGetVideoPort(::testing::_, ::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](dsVideoPortType_t, int, intptr_t* handle) {
+                if (handle) { *handle = 1; }
+                return dsERR_NONE;
+            }));
+    
+    ON_CALL(*p_dsVideoPortHalMock, dsIsDisplayConnected(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](intptr_t, bool* connected) {
+                if (connected) { *connected = true; }
+                return dsERR_NONE;
+            }));
+    
+    ON_CALL(*p_dsVideoPortHalMock, dsGetHDCPStatus(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](intptr_t, dsHdcpStatus_t* status) {
+                if (status) { *status = dsHDCP_STATUS_AUTHENTICATED; }
+                return dsERR_NONE;
+            }));
+    
+    ON_CALL(*p_dsVideoPortHalMock, dsGetHDCPProtocol(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](intptr_t, dsHdcpProtocolVersion_t* version) {
+                if (version) { *version = dsHDCP_VERSION_2X; }
+                return dsERR_NONE;
+            }));
+    
+    ON_CALL(*p_dsVideoPortHalMock, dsGetHDCPReceiverProtocol(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](intptr_t, dsHdcpProtocolVersion_t* version) {
+                if (version) { *version = dsHDCP_VERSION_2X; }
+                return dsERR_NONE;
+            }));
+    
+    ON_CALL(*p_dsVideoPortHalMock, dsGetHDCPCurrentProtocol(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](intptr_t, dsHdcpProtocolVersion_t* version) {
+                if (version) { *version = dsHDCP_VERSION_2X; }
+                return dsERR_NONE;
+            }));
+    
+    ON_CALL(*p_dsVideoPortHalMock, dsIsHDCPEnabled(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](intptr_t, bool* enabled) {
+                if (enabled) { *enabled = true; }
+                return dsERR_NONE;
+            }));
+    
+    // Register callback to capture HDCP status change events
+    ON_CALL(*p_dsVideoPortHalMock, dsRegisterHdcpStatusCallback(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [&](intptr_t, dsHdcpStatusCallback_t cbFunc) {
+                m_dsHdcpStatusCallback = cbFunc;
+                TEST_LOG("Captured dsHdcpStatusCallback");
+                return dsERR_NONE;
+            }));
+    
+    TEST_LOG("DsVideoPortApi HdcpProfile-specific behaviors configured");
+    
+    // 3. Display HAL Mock - HDMI hotplug functionality
+    ON_CALL(*p_dsDisplayHalMock, dsGetDisplay(::testing::_, ::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](dsVideoPortType_t, int, intptr_t* handle) {
+                if (handle) { *handle = 1; }
+                return dsERR_NONE;
+            }));
+    
+    // Register callback to capture HDMI hotplug events
+    ON_CALL(*p_dsDisplayHalMock, dsRegisterHdmiHotPlugEventCallback(::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [&](intptr_t, dsHdmiHotPlugEventCallback_t cbFunc) {
+                m_dsHdmiHotPlugCallback = cbFunc;
+                TEST_LOG("Captured dsHdmiHotPlugEventCallback");
+                return dsERR_NONE;
+            }));
+    
+    TEST_LOG("DsDisplayApi HdcpProfile-specific behaviors configured");
+    
+    // Note: Audio, FPD, and HdmiIn HAL mocks are set up by L2TestsMock
+    // HdcpProfile uses IDeviceSettingsVideoPort and IDeviceSettingsDisplay interfaces
+    // But DeviceSettings plugin initializes ALL sub-implementations, so L2TestsMock provides
+    // robust default mocks for all HAL APIs to prevent crashes during DeviceSettings activation
+    
+    TEST_LOG("HdcpProfile HAL mock setup complete - VideoPort, Display, and Host configured");
+
+    // Mock PowerManager HAL for DeviceSettings dependency
+    // Note: PowerManager activation is optional - DeviceSettings can work without it
+    // Set up mocks but allow them to not be called
+    EXPECT_CALL(*p_powerManagerHalMock, PLAT_DS_INIT())
+        .Times(::testing::AtMost(1))
+        .WillRepeatedly(::testing::Return(DEEPSLEEPMGR_SUCCESS));
+
+    EXPECT_CALL(*p_powerManagerHalMock, PLAT_INIT())
+        .Times(::testing::AtMost(1))
+        .WillRepeatedly(::testing::Return(PWRMGR_SUCCESS));
+
+    EXPECT_CALL(*p_powerManagerHalMock, PLAT_API_SetWakeupSrc(::testing::_, ::testing::_))
+        .Times(::testing::AnyNumber())
+        .WillRepeatedly(::testing::Return(PWRMGR_SUCCESS));
+
+    EXPECT_CALL(*p_powerManagerHalMock, PLAT_API_GetPowerState(::testing::_))
+        .Times(::testing::AnyNumber())
+        .WillRepeatedly(::testing::Invoke(
+            [](PWRMgr_PowerState_t* powerState) {
+                *powerState = PWRMGR_POWERSTATE_ON;
+                return PWRMGR_SUCCESS;
+            }));
+
+    TEST_LOG("PowerManager HAL mock setup complete");
+
+    // Activate DeviceSettings plugin first (required dependency for HdcpProfile)
+    TEST_LOG("Activating DeviceSettings plugin...");
+    status = ActivateService("org.rdk.DeviceSettings");
+    if (status != Core::ERROR_NONE) {
+        TEST_LOG("Failed to activate DeviceSettings: %d (%s)", status, Core::ErrorToString(status));
+    } else {
+        TEST_LOG("DeviceSettings activated successfully");
+        // Give DeviceSettings time to initialize
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
-    MOCK_METHOD(void, onDisplayConnectionChanged, (const JsonObject& parameters));
-};
-
-class HdcpProfile_L2Test : public L2TestMocks {
-protected:
-    HdcpProfile_L2Test();
-    ~HdcpProfile_L2Test() override;
-
-public:
-    uint32_t CreateHdcpProfileInterfaceObject();
-
-protected:
-    Exchange::IHdcpProfile* m_hdcpProfilePlugin = nullptr;
-    PluginHost::IShell* m_controller_hdcpProfile = nullptr;
-    Core::Sink<HdcpProfileNotificationHandler> m_notificationHandler;
-    IARM_EventHandler_t dsHdmiEventHandler = nullptr;
-    IARM_EventHandler_t powerEventHandler = nullptr;
-
-    Core::ProxyType<RPC::InvokeServerType<1, 0, 4>> HdcpProfile_Engine;
-    Core::ProxyType<RPC::CommunicatorClient> HdcpProfile_Client;
-
-    std::mutex m_mutex;
-    std::condition_variable m_condition_variable;
-    uint32_t m_event_signalled = HDCPPROFILE_STATUS_INVALID;
-};
-
-HdcpProfile_L2Test::HdcpProfile_L2Test()
-    : L2TestMocks()
-    , m_event_signalled(HDCPPROFILE_STATUS_INVALID)
-{
-    TEST_LOG("Initializing HdcpProfile L2 Test Environment");
-
-
-    // Mock IARM Bus initialization
-    ON_CALL(*p_iarmBusImplMock, IARM_Bus_Init(::testing::_))
-        .WillByDefault(::testing::Return(IARM_RESULT_SUCCESS));
-
-    ON_CALL(*p_iarmBusImplMock, IARM_Bus_Connect())
-        .WillByDefault(::testing::Return(IARM_RESULT_SUCCESS));
-
-    EXPECT_CALL(*p_iarmBusImplMock, IARM_Bus_Init(::testing::_))
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(IARM_RESULT_SUCCESS));
-
-    EXPECT_CALL(*p_iarmBusImplMock, IARM_Bus_Connect())
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(IARM_RESULT_SUCCESS));
-
-    // Mock IARM event registration
-    EXPECT_CALL(*p_iarmBusImplMock, IARM_Bus_RegisterEventHandler(::testing::_, ::testing::_, ::testing::_))
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Invoke(
-            [this](const char* ownerName, IARM_EventId_t eventId, IARM_EventHandler_t handler) {
-                if (strcmp(ownerName, IARM_BUS_DSMGR_NAME) == 0) {
-                    if (eventId == IARM_BUS_DSMGR_EVENT_HDMI_HOTPLUG) {
-                        dsHdmiEventHandler = handler;
-                    }
-                } else if (strcmp(ownerName, IARM_BUS_PWRMGR_NAME) == 0) {
-                    powerEventHandler = handler;
-                }
-                return IARM_RESULT_SUCCESS;
-            }));
-
-    EXPECT_CALL(*p_iarmBusImplMock, IARM_Bus_UnRegisterEventHandler(::testing::_, ::testing::_))
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(IARM_RESULT_SUCCESS));
-
-    // Mock RFC calls if needed
-    ON_CALL(*p_rfcApiImplMock, getRFCParameter(::testing::_, ::testing::_, ::testing::_))
-        .WillByDefault(::testing::Invoke(
-            [](char* pcCallerID, const char* pcParameterName, RFC_ParamData_t* pstParamData) {
-                // Return failure for any RFC parameters - plugin should use defaults
-                return WDMP_FAILURE;
-            }));
-
-    // Mock IARM Bus calls
-    EXPECT_CALL(*p_iarmBusImplMock, IARM_Bus_Call(::testing::_, ::testing::_, ::testing::_, ::testing::_))
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Invoke(
-            [](const char* ownerName, const char* methodName, void* arg, size_t argLen) {
-                TEST_LOG("IARM_Bus_Call: %s.%s", ownerName, methodName);
-                return IARM_RESULT_SUCCESS;
-            }));
-
-    // Setup VideoOutputPort mocks
-    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-        .WillByDefault(::testing::Return(true));
-
-    EXPECT_CALL(*p_videoOutputPortMock, getHDCPStatus())
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(dsHDCP_STATUS_AUTHENTICATED));
-
-    EXPECT_CALL(*p_videoOutputPortMock, getHDCPProtocol())
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(dsHDCP_VERSION_2X));
-
-    EXPECT_CALL(*p_videoOutputPortMock, isContentProtected())
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(true));
-
-    EXPECT_CALL(*p_videoOutputPortMock, getHDCPReceiverProtocol())
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(dsHDCP_VERSION_2X));
-
-    EXPECT_CALL(*p_videoOutputPortMock, getHDCPCurrentProtocol())
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(dsHDCP_VERSION_2X));
-
-    // Setup Host singleton mocks
-    ON_CALL(*p_hostImplMock, getDefaultVideoPortName())
-        .WillByDefault(::testing::Return(std::string("HDMI0")));
-
-    EXPECT_CALL(*p_hostImplMock, getDefaultVideoPortName())
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(std::string("HDMI0")));
-
-    ON_CALL(*p_hostImplMock, getVideoOutputPort(::testing::_))
-        .WillByDefault(::testing::Invoke(
-            [](const std::string& name) -> device::VideoOutputPort& {
-                return device::VideoOutputPort::getInstance();
-            }));
-
-    EXPECT_CALL(*p_hostImplMock, getVideoOutputPort(::testing::_))
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Invoke(
-            [](const std::string& name) -> device::VideoOutputPort& {
-                return device::VideoOutputPort::getInstance();
-            }));
-
-    // Setup VideoOutputPortConfig mocks
-    ON_CALL(*p_videoOutputPortConfigImplMock, getPort(::testing::_))
-        .WillByDefault(::testing::ReturnRef(device::VideoOutputPort::getInstance()));
-
-    EXPECT_CALL(*p_videoOutputPortConfigImplMock, getPort(::testing::_))
-        .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::ReturnRef(device::VideoOutputPort::getInstance()));
-
-    /* Activate plugin in constructor with retry mechanism */
-    uint32_t status = Core::ERROR_GENERAL;
+    // Activate HdcpProfile plugin with retry mechanism
+    TEST_LOG("Activating HdcpProfile plugin...");
     int retry_count = 0;
     const int max_retries = 10;
+    status = Core::ERROR_GENERAL;
     
     while (status != Core::ERROR_NONE && retry_count < max_retries) {
         status = ActivateService("org.rdk.HdcpProfile");
@@ -276,30 +361,88 @@ HdcpProfile_L2Test::HdcpProfile_L2Test()
     }
 }
 
-// Test case to validate GetSettopHDCPSupport using COM-RPC
-TEST_F(HdcpProfile_L2Test, GetSettopHDCPSupport_COMRPC)
-{
-    if (CreateHdcpProfileInterfaceObject() != Core::ERROR_NONE) {
-        TEST_LOG("Invalid HdcpProfile_Client");
-    } else {
-        EXPECT_TRUE(m_controller_hdcpProfile != nullptr);
-        if (m_controller_hdcpProfile) {
-            EXPECT_TRUE(m_hdcpProfilePlugin != nullptr);
-            if (m_hdcpProfilePlugin) {
+/**
+ * @brief Destructor for HdcpProfile L2 test class
+ */
+HdcpProfile_L2test::~HdcpProfile_L2test() {
+    TEST_LOG("HdcpProfile_L2test Destructor");
     
+    // Deactivate plugins in reverse order
+    DeactivateService("org.rdk.HdcpProfile");
+    DeactivateService("org.rdk.DeviceSettings");
+}
+
+/**
+ * @brief Create HdcpProfile interface object using COM-RPC connection
+ */
+uint32_t HdcpProfile_L2test::CreateHdcpProfileInterfaceObjectUsingComRPCConnection() {
+    string token;
+    // Get the Controller for HdcpProfile plugin
+    auto interface = m_controller->QueryInterfaceByCallsign<PluginHost::IShell>(HDCPPROFILE_CALLSIGN);
+    if (interface == nullptr) {
+        TEST_LOG("Failed to get Controller for HdcpProfile plugin");
+        return Core::ERROR_UNAVAILABLE;
+    }
+
+    m_controller_HdcpProfile = interface;
+    /* Activate the plugin */
+    auto result = m_controller_HdcpProfile->Activate(PluginHost::IShell::REQUESTED);
+    if (result != Core::ERROR_NONE) {
+        TEST_LOG("Failed to activate HdcpProfile plugin: %d", result);
+        return result;
+    }
+
+    /* Get the HdcpProfile interface */
+    m_HdcpProfileplugin = m_controller_HdcpProfile->QueryInterface<Exchange::IHdcpProfile>();
+    if (m_HdcpProfileplugin == nullptr) {
+        TEST_LOG("Failed to get IHdcpProfile interface");
+        return Core::ERROR_UNAVAILABLE;
+    }
+
+    TEST_LOG("Successfully created HdcpProfile COM-RPC interface");
+    return Core::ERROR_NONE;
+}
+
+/**
+ * @brief Wait for request status
+ */
+uint32_t HdcpProfile_L2test::WaitForRequestStatus(uint32_t timeout_ms, HdcpProfileL2test_async_events_t expected_status) {
+    std::unique_lock<std::mutex> lock(m_mutex);
+    auto now = std::chrono::system_clock::now();
+    std::chrono::milliseconds timeout(timeout_ms);
+    uint32_t signalled = HdcpProfile_StateInvalid;
+
+    while (!(expected_status & m_event_signalled)) {
+        if (m_condition_variable.wait_until(lock, now + timeout) == std::cv_status::timeout) {
+            TEST_LOG("Timeout waiting for request status event");
+            break;
+        }
+    }
+    signalled = m_event_signalled;
+    return signalled;
+}
+
+/**
+ * @brief Test GetSettopHDCPSupport via COM-RPC
+ */
+TEST_F(HdcpProfile_L2test, GetSettopHDCPSupport_COMRPC)
+{
     TEST_LOG("Testing GetSettopHDCPSupport via COM-RPC");
+    
+    if (CreateHdcpProfileInterfaceObjectUsingComRPCConnection() != Core::ERROR_NONE) {
+        FAIL() << "Failed to create HdcpProfile COM-RPC interface";
+    }
+    
+    ASSERT_NE(m_controller_HdcpProfile, nullptr);
+    ASSERT_NE(m_HdcpProfileplugin, nullptr);
     
     string supportedHDCPVersion;
     bool isHDCPSupported = false;
     bool success = false;
     
-    uint32_t result = m_hdcpProfilePlugin->GetSettopHDCPSupport(supportedHDCPVersion, isHDCPSupported, success);
+    uint32_t result = m_HdcpProfileplugin->GetSettopHDCPSupport(supportedHDCPVersion, isHDCPSupported, success);
     
     EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result != Core::ERROR_NONE) {
-        std::string errorMsg = "COM-RPC returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-        TEST_LOG("Err: %s", errorMsg.c_str());
-    }
     EXPECT_TRUE(success);
     EXPECT_TRUE(isHDCPSupported);
     EXPECT_FALSE(supportedHDCPVersion.empty());
@@ -307,543 +450,34 @@ TEST_F(HdcpProfile_L2Test, GetSettopHDCPSupport_COMRPC)
     TEST_LOG("Settop HDCP Support:");
     TEST_LOG("  isHDCPSupported: %d", isHDCPSupported);
     TEST_LOG("  supportedHDCPVersion: %s", supportedHDCPVersion.c_str());
-
-                m_hdcpProfilePlugin->Release();
-            } else {
-                TEST_LOG("m_hdcpProfilePlugin is NULL");
-            }
-            m_controller_hdcpProfile->Release();
-        } else {
-            TEST_LOG("m_controller_hdcpProfile is NULL");
-        }
-    }
+    
+    m_HdcpProfileplugin->Release();
+    m_controller_HdcpProfile->Release();
 }
 
-// Test case to validate Register and Unregister using COM-RPC
-TEST_F(HdcpProfile_L2Test, RegisterUnregister_COMRPC)
+/**
+ * @brief Test GetHDCPStatus via COM-RPC
+ */
+TEST_F(HdcpProfile_L2test, GetHDCPStatus_COMRPC)
 {
-    if (CreateHdcpProfileInterfaceObject() != Core::ERROR_NONE) {
-        TEST_LOG("Invalid HdcpProfile_Client");
-    } else {
-        EXPECT_TRUE(m_controller_hdcpProfile != nullptr);
-        if (m_controller_hdcpProfile) {
-            EXPECT_TRUE(m_hdcpProfilePlugin != nullptr);
-            if (m_hdcpProfilePlugin) {
-    
-    TEST_LOG("Testing Register and Unregister via COM-RPC");
-    
-    // Register for notifications
-    uint32_t result = m_hdcpProfilePlugin->Register(&m_notificationHandler);
-    
-    EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result != Core::ERROR_NONE) {
-        std::string errorMsg = "Register returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-        TEST_LOG("Err: %s", errorMsg.c_str());
-    } else {
-        TEST_LOG("Successfully registered for notifications");
-    }
-    
-    // Unregister from notifications
-    result = m_hdcpProfilePlugin->Unregister(&m_notificationHandler);
-    
-    EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result != Core::ERROR_NONE) {
-        std::string errorMsg = "Unregister returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-        TEST_LOG("Err: %s", errorMsg.c_str());
-    } else {
-        TEST_LOG("Successfully unregistered from notifications");
-    }
-
-                m_hdcpProfilePlugin->Release();
-            } else {
-                TEST_LOG("m_hdcpProfilePlugin is NULL");
-            }
-            m_controller_hdcpProfile->Release();
-        } else {
-            TEST_LOG("m_controller_hdcpProfile is NULL");
-        }
-    }
-}
-
-// Test case to validate OnDisplayConnectionChanged notification using COM-RPC
-TEST_F(HdcpProfile_L2Test, OnDisplayConnectionChanged_Notification_COMRPC)
-{
-    if (CreateHdcpProfileInterfaceObject() != Core::ERROR_NONE) {
-        TEST_LOG("Invalid HdcpProfile_Client");
-    } else {
-        EXPECT_TRUE(m_controller_hdcpProfile != nullptr);
-        if (m_controller_hdcpProfile) {
-            EXPECT_TRUE(m_hdcpProfilePlugin != nullptr);
-            if (m_hdcpProfilePlugin) {
-    
-    TEST_LOG("Testing OnDisplayConnectionChanged notification via COM-RPC");
-    
-    // Register for event notifications
-    uint32_t result = m_hdcpProfilePlugin->Register(&m_notificationHandler);
-    EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result != Core::ERROR_NONE) {
-        std::string errorMsg = "Register returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-        TEST_LOG("Err: %s", errorMsg.c_str());
-    } else {
-        TEST_LOG("Successfully registered for notifications");
-    }
-    
-    // Reset event flag before triggering the event
-    m_notificationHandler.ResetEvent();
-    
-    // Trigger HDMI hotplug event to generate OnDisplayConnectionChanged notification
-    if (dsHdmiEventHandler != nullptr) {
-        TEST_LOG("Triggering HDMI hotplug event");
-        IARM_Bus_DSMgr_EventData_t eventData;
-        eventData.data.hdmi_in_connect.port = dsHDMI_IN_PORT_0;
-        eventData.data.hdmi_in_connect.isPortConnected = true;
-        dsHdmiEventHandler(IARM_BUS_DSMGR_NAME, IARM_BUS_DSMGR_EVENT_HDMI_HOTPLUG, &eventData, 0);
-        
-        // Wait for the event notification
-        uint32_t eventStatus = m_notificationHandler.WaitForEvent(EVNT_TIMEOUT, ON_DISPLAY_CONNECTION_CHANGED);
-        
-        EXPECT_NE(eventStatus, HDCPPROFILE_STATUS_INVALID);
-        if (eventStatus != HDCPPROFILE_STATUS_INVALID) {
-            TEST_LOG("OnDisplayConnectionChanged event received successfully");
-            
-            // Validate the received HDCP status
-            HDCPStatus receivedStatus = m_notificationHandler.GetLastHdcpStatus();
-            TEST_LOG("Received HDCP Status:");
-            TEST_LOG("  isConnected: %d", receivedStatus.isConnected);
-            TEST_LOG("  isHDCPCompliant: %d", receivedStatus.isHDCPCompliant);
-            TEST_LOG("  isHDCPEnabled: %d", receivedStatus.isHDCPEnabled);
-            TEST_LOG("  hdcpReason: %d", receivedStatus.hdcpReason);
-            TEST_LOG("  supportedHDCPVersion: %s", receivedStatus.supportedHDCPVersion.c_str());
-            TEST_LOG("  receiverHDCPVersion: %s", receivedStatus.receiverHDCPVersion.c_str());
-            TEST_LOG("  currentHDCPVersion: %s", receivedStatus.currentHDCPVersion.c_str());
-            
-            // Validate basic expectations
-            EXPECT_TRUE(receivedStatus.isConnected);
-            EXPECT_FALSE(receivedStatus.supportedHDCPVersion.empty());
-        } else {
-            TEST_LOG("Timeout waiting for OnDisplayConnectionChanged event");
-        }
-    } else {
-        TEST_LOG("dsHdmiEventHandler is NULL, cannot trigger event");
-    }
-    
-    // Unregister from notifications
-    result = m_hdcpProfilePlugin->Unregister(&m_notificationHandler);
-    EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result == Core::ERROR_NONE) {
-        TEST_LOG("Successfully unregistered from notifications");
-    }
-
-                m_hdcpProfilePlugin->Release();
-            } else {
-                TEST_LOG("m_hdcpProfilePlugin is NULL");
-            }
-            m_controller_hdcpProfile->Release();
-        } else {
-            TEST_LOG("m_controller_hdcpProfile is NULL");
-        }
-    }
-}
-
-// Test case to validate notification with HDCP status change event
-TEST_F(HdcpProfile_L2Test, OnDisplayConnectionChanged_HDCPStatusChange_COMRPC)
-{
-    if (CreateHdcpProfileInterfaceObject() != Core::ERROR_NONE) {
-        TEST_LOG("Invalid HdcpProfile_Client");
-    } else {
-        EXPECT_TRUE(m_controller_hdcpProfile != nullptr);
-        if (m_controller_hdcpProfile) {
-            EXPECT_TRUE(m_hdcpProfilePlugin != nullptr);
-            if (m_hdcpProfilePlugin) {
-    
-    TEST_LOG("Testing OnDisplayConnectionChanged notification with HDCP status change via COM-RPC");
-    
-    // Register for event notifications
-    uint32_t result = m_hdcpProfilePlugin->Register(&m_notificationHandler);
-    EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result != Core::ERROR_NONE) {
-        std::string errorMsg = "Register returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-        TEST_LOG("Err: %s", errorMsg.c_str());
-    } else {
-        TEST_LOG("Successfully registered for notifications");
-    }
-    
-    // Reset event flag before triggering the event
-    m_notificationHandler.ResetEvent();
-    
-    // Trigger HDCP status change event via DS event mechanism
-    if (dsHdmiEventHandler != nullptr) {
-        TEST_LOG("Triggering HDCP status change event");
-        IARM_Bus_DSMgr_EventData_t eventData;
-        eventData.data.hdmi_hdcp.hdcpStatus = dsHDCP_STATUS_AUTHENTICATED;
-        dsHdmiEventHandler(IARM_BUS_DSMGR_NAME, IARM_BUS_DSMGR_EVENT_HDCP_STATUS, &eventData, 0);
-        
-        // Wait for the event notification
-        uint32_t eventStatus = m_notificationHandler.WaitForEvent(EVNT_TIMEOUT, ON_DISPLAY_CONNECTION_CHANGED);
-        
-        EXPECT_NE(eventStatus, HDCPPROFILE_STATUS_INVALID);
-        if (eventStatus != HDCPPROFILE_STATUS_INVALID) {
-            TEST_LOG("OnDisplayConnectionChanged notification received after HDCP status change");
-            
-            // Validate the received HDCP status
-            HDCPStatus receivedStatus = m_notificationHandler.GetLastHdcpStatus();
-            TEST_LOG("Received HDCP Status:");
-            TEST_LOG("  isConnected: %d", receivedStatus.isConnected);
-            TEST_LOG("  isHDCPCompliant: %d", receivedStatus.isHDCPCompliant);
-            TEST_LOG("  isHDCPEnabled: %d", receivedStatus.isHDCPEnabled);
-            TEST_LOG("  hdcpReason: %d", receivedStatus.hdcpReason);
-            TEST_LOG("  supportedHDCPVersion: %s", receivedStatus.supportedHDCPVersion.c_str());
-            TEST_LOG("  receiverHDCPVersion: %s", receivedStatus.receiverHDCPVersion.c_str());
-            TEST_LOG("  currentHDCPVersion: %s", receivedStatus.currentHDCPVersion.c_str());
-            
-            // Validate that HDCP status reflects authenticated state
-            EXPECT_TRUE(receivedStatus.isHDCPCompliant);
-        } else {
-            TEST_LOG("Timeout waiting for OnDisplayConnectionChanged notification");
-        }
-    } else {
-        TEST_LOG("dsHdmiEventHandler is NULL, cannot trigger HDCP status change event");
-    }
-    
-    // Unregister from notifications
-    result = m_hdcpProfilePlugin->Unregister(&m_notificationHandler);
-    EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result == Core::ERROR_NONE) {
-        TEST_LOG("Successfully unregistered from notifications");
-    }
-
-                m_hdcpProfilePlugin->Release();
-            } else {
-                TEST_LOG("m_hdcpProfilePlugin is NULL");
-            }
-            m_controller_hdcpProfile->Release();
-        } else {
-            TEST_LOG("m_controller_hdcpProfile is NULL");
-        }
-    }
-}
-
-
-// ============================= JSON-RPC Test Cases =============================
-
-// Test case to validate getHDCPStatus using JSON-RPC
-TEST_F(HdcpProfile_L2Test, GetHDCPStatus_JSONRPC)
-{
-    TEST_LOG("Testing getHDCPStatus via JSON-RPC");
-        
-    JsonObject params;
-    JsonObject result;
-    
-    uint32_t status = InvokeServiceMethod("org.rdk.HdcpProfile.1", "getHDCPStatus", params, result);
-    
-    EXPECT_EQ(status, Core::ERROR_NONE);
-    
-    EXPECT_TRUE(result.HasLabel("success"));
-    if (result.HasLabel("success")) {
-        EXPECT_TRUE(result["success"].Boolean());
-    }
-    
-    EXPECT_TRUE(result.HasLabel("HDCPStatus"));
-    if (result.HasLabel("HDCPStatus")) {
-        JsonObject hdcpStatus = result["HDCPStatus"].Object();
-        
-        EXPECT_TRUE(hdcpStatus.HasLabel("isConnected"));
-        if (hdcpStatus.HasLabel("isConnected")) {
-            TEST_LOG("  isConnected: %d", hdcpStatus["isConnected"].Boolean());
-            EXPECT_TRUE(hdcpStatus["isConnected"].Boolean());
-        }
-        
-        EXPECT_TRUE(hdcpStatus.HasLabel("isHDCPCompliant"));
-        if (hdcpStatus.HasLabel("isHDCPCompliant")) {
-            TEST_LOG("  isHDCPCompliant: %d", hdcpStatus["isHDCPCompliant"].Boolean());
-        }
-        
-        EXPECT_TRUE(hdcpStatus.HasLabel("isHDCPEnabled"));
-        if (hdcpStatus.HasLabel("isHDCPEnabled")) {
-            TEST_LOG("  isHDCPEnabled: %d", hdcpStatus["isHDCPEnabled"].Boolean());
-        }
-        
-        EXPECT_TRUE(hdcpStatus.HasLabel("hdcpReason"));
-        if (hdcpStatus.HasLabel("hdcpReason")) {
-            TEST_LOG("  hdcpReason: %lld", (long long)hdcpStatus["hdcpReason"].Number());
-        }
-        
-        EXPECT_TRUE(hdcpStatus.HasLabel("supportedHDCPVersion"));
-        if (hdcpStatus.HasLabel("supportedHDCPVersion")) {
-            string version = hdcpStatus["supportedHDCPVersion"].String();
-            TEST_LOG("  supportedHDCPVersion: %s", version.c_str());
-        }
-        
-        EXPECT_TRUE(hdcpStatus.HasLabel("receiverHDCPVersion"));
-        if (hdcpStatus.HasLabel("receiverHDCPVersion")) {
-            TEST_LOG("  receiverHDCPVersion: %s", hdcpStatus["receiverHDCPVersion"].String().c_str());
-        }
-        
-        EXPECT_TRUE(hdcpStatus.HasLabel("currentHDCPVersion"));
-        if (hdcpStatus.HasLabel("currentHDCPVersion")) {
-            TEST_LOG("  currentHDCPVersion: %s", hdcpStatus["currentHDCPVersion"].String().c_str());
-        }
-    }
-}
-
-// Test case to validate getSettopHDCPSupport using JSON-RPC
-TEST_F(HdcpProfile_L2Test, GetSettopHDCPSupport_JSONRPC)
-{
-    TEST_LOG("Testing getSettopHDCPSupport via JSON-RPC");
-        
-    JsonObject params;
-    JsonObject result;
-    
-    uint32_t status = InvokeServiceMethod("org.rdk.HdcpProfile.1", "getSettopHDCPSupport", params, result);
-    
-    EXPECT_EQ(status, Core::ERROR_NONE);
-    
-    EXPECT_TRUE(result.HasLabel("success"));
-    if (result.HasLabel("success")) {
-        EXPECT_TRUE(result["success"].Boolean());
-    }
-    
-    EXPECT_TRUE(result.HasLabel("isHDCPSupported"));
-    if (result.HasLabel("isHDCPSupported")) {
-        bool isSupported = result["isHDCPSupported"].Boolean();
-        TEST_LOG("  isHDCPSupported: %d", isSupported);
-        EXPECT_TRUE(isSupported);
-    }
-    
-    EXPECT_TRUE(result.HasLabel("supportedHDCPVersion"));
-    if (result.HasLabel("supportedHDCPVersion")) {
-        string version = result["supportedHDCPVersion"].String();
-        TEST_LOG("  supportedHDCPVersion: %s", version.c_str());
-        EXPECT_FALSE(version.empty());
-    }
-}
-
-// Test case to validate onDisplayConnectionChanged event using JSON-RPC
-TEST_F(HdcpProfile_L2Test, OnDisplayConnectionChanged_Event_JSONRPC)
-{
-    TEST_LOG("Testing onDisplayConnectionChanged event via JSON-RPC");
-        
-    // Note: JSON-RPC event subscription would be tested through the actual Thunder framework
-    // For L2 tests, the COM-RPC event test already validates the notification mechanism
-    // This test validates that the JSON-RPC interface is available
-    
-    JsonObject params;
-    JsonObject result;
-    
-    // Verify we can call getHDCPStatus via JSON-RPC
-    uint32_t status = InvokeServiceMethod("org.rdk.HdcpProfile.1", "getHDCPStatus", params, result);
-    //EXPECT_EQ(status, Core::ERROR_NONE);
-    
-    EXPECT_TRUE(result.HasLabel("success"));
-    if (result.HasLabel("success")) {
-        EXPECT_TRUE(result["success"].Boolean());
-    }
-    
-    TEST_LOG("JSON-RPC interface validated successfully");
-}
-
-// Test case to validate multiple status queries
-TEST_F(HdcpProfile_L2Test, MultipleStatusQueries_COMRPC)
-{
-    if (CreateHdcpProfileInterfaceObject() != Core::ERROR_NONE) {
-        TEST_LOG("Invalid HdcpProfile_Client");
-    } else {
-        EXPECT_TRUE(m_controller_hdcpProfile != nullptr);
-        if (m_controller_hdcpProfile) {
-            EXPECT_TRUE(m_hdcpProfilePlugin != nullptr);
-            if (m_hdcpProfilePlugin) {
-    
-    TEST_LOG("Testing multiple HDCP status queries");
-    
-    for (int i = 0; i < 5; i++) {
-        HDCPStatus hdcpStatus;
-        bool success = false;
-        
-        uint32_t result = m_hdcpProfilePlugin->GetHDCPStatus(hdcpStatus, success);
-        
-        EXPECT_EQ(result, Core::ERROR_NONE);
-        if (result != Core::ERROR_NONE) {
-            std::string errorMsg = "COM-RPC returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-            TEST_LOG("Err: %s", errorMsg.c_str());
-        }
-        EXPECT_TRUE(success);
-        EXPECT_TRUE(hdcpStatus.isConnected);
-        
-        TEST_LOG("Query %d - Status retrieved successfully", i + 1);
-        
-        // Small delay between queries
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
-                m_hdcpProfilePlugin->Release();
-            } else {
-                TEST_LOG("m_hdcpProfilePlugin is NULL");
-            }
-            m_controller_hdcpProfile->Release();
-        } else {
-            TEST_LOG("m_controller_hdcpProfile is NULL");
-        }
-    }
-}
-
-// Test case to validate HDCP version consistency
-TEST_F(HdcpProfile_L2Test, HDCPVersionConsistency_COMRPC)
-{
-    if (CreateHdcpProfileInterfaceObject() != Core::ERROR_NONE) {
-        TEST_LOG("Invalid HdcpProfile_Client");
-    } else {
-        EXPECT_TRUE(m_controller_hdcpProfile != nullptr);
-        if (m_controller_hdcpProfile) {
-            EXPECT_TRUE(m_hdcpProfilePlugin != nullptr);
-            if (m_hdcpProfilePlugin) {
-    
-    TEST_LOG("Testing HDCP version consistency");
-    
-    // Get status
-    HDCPStatus hdcpStatus;
-    bool success = false;
-    uint32_t result = m_hdcpProfilePlugin->GetHDCPStatus(hdcpStatus, success);
-    EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result != Core::ERROR_NONE) {
-        std::string errorMsg = "COM-RPC returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-        TEST_LOG("Err: %s", errorMsg.c_str());
-    }
-    EXPECT_TRUE(success);
-    
-    // Get settop support
-    string supportedVersion;
-    bool isSupported = false;
-    result = m_hdcpProfilePlugin->GetSettopHDCPSupport(supportedVersion, isSupported, success);
-    EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result != Core::ERROR_NONE) {
-        std::string errorMsg = "COM-RPC returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-        TEST_LOG("Err: %s", errorMsg.c_str());
-    }
-    EXPECT_TRUE(success);
-    
-    // Verify that supportedVersion matches between both calls
-    EXPECT_EQ(hdcpStatus.supportedHDCPVersion, supportedVersion);
-    TEST_LOG("Version consistency verified: %s", supportedVersion.c_str());
-
-                m_hdcpProfilePlugin->Release();
-            } else {
-                TEST_LOG("m_hdcpProfilePlugin is NULL");
-            }
-            m_controller_hdcpProfile->Release();
-        } else {
-            TEST_LOG("m_controller_hdcpProfile is NULL");
-        }
-    }
-}
-
-// Test case to validate behavior when display is not connected
-TEST_F(HdcpProfile_L2Test, StatusWhenDisplayNotConnected_COMRPC)
-{
-    if (CreateHdcpProfileInterfaceObject() != Core::ERROR_NONE) {
-        TEST_LOG("Invalid HdcpProfile_Client");
-    } else {
-        EXPECT_TRUE(m_controller_hdcpProfile != nullptr);
-        if (m_controller_hdcpProfile) {
-            EXPECT_TRUE(m_hdcpProfilePlugin != nullptr);
-            if (m_hdcpProfilePlugin) {
-    
-    TEST_LOG("Testing status when display is not connected");
-    
-    // Mock display as disconnected
-    ON_CALL(*p_videoOutputPortMock, isDisplayConnected())
-        .WillByDefault(::testing::Return(false));
-    
-    HDCPStatus hdcpStatus;
-    bool success = false;
-    
-    uint32_t result = m_hdcpProfilePlugin->GetHDCPStatus(hdcpStatus, success);
-    
-    EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result != Core::ERROR_NONE) {
-        std::string errorMsg = "COM-RPC returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-        TEST_LOG("Err: %s", errorMsg.c_str());
-    }
-    EXPECT_TRUE(success);
-    EXPECT_FALSE(hdcpStatus.isConnected);
-    
-    TEST_LOG("Status correctly reflects disconnected display");
-
-                m_hdcpProfilePlugin->Release();
-            } else {
-                TEST_LOG("m_hdcpProfilePlugin is NULL");
-            }
-            m_controller_hdcpProfile->Release();
-        } else {
-            TEST_LOG("m_controller_hdcpProfile is NULL");
-        }
-    }
-}
-
-HdcpProfile_L2Test::~HdcpProfile_L2Test()
-{
-    TEST_LOG("HdcpProfile_L2Test Destructor");
-    uint32_t status = DeactivateService("org.rdk.HdcpProfile");
-    //EXPECT_EQ(Core::ERROR_NONE, status);
-
-}
-
-uint32_t HdcpProfile_L2Test::CreateHdcpProfileInterfaceObject()
-{
-    uint32_t return_value = Core::ERROR_GENERAL;
-
-    TEST_LOG("Creating HdcpProfile_Engine");
-    HdcpProfile_Engine = Core::ProxyType<RPC::InvokeServerType<1, 0, 4>>::Create();
-    HdcpProfile_Client = Core::ProxyType<RPC::CommunicatorClient>::Create(Core::NodeId("/tmp/communicator"), Core::ProxyType<Core::IIPCServer>(HdcpProfile_Engine));
-
-    TEST_LOG("Creating HdcpProfile_Engine Announcements");
-#if ((THUNDER_VERSION == 2) || ((THUNDER_VERSION == 4) && (THUNDER_VERSION_MINOR == 2)))
-    HdcpProfile_Engine->Announcements(HdcpProfile_Client->Announcement());
-#endif
-    if (!HdcpProfile_Client.IsValid()) {
-        TEST_LOG("Invalid HdcpProfile_Client");
-    } else {
-        m_controller_hdcpProfile = HdcpProfile_Client->Open<PluginHost::IShell>(_T("org.rdk.HdcpProfile"), ~0, 3000);
-        if (m_controller_hdcpProfile) {
-            m_hdcpProfilePlugin = m_controller_hdcpProfile->QueryInterface<Exchange::IHdcpProfile>();
-            return_value = Core::ERROR_NONE;
-            TEST_LOG("Successfully created HdcpProfile Plugin Interface");
-        }
-        else{
-            TEST_LOG("Failed to get HdcpProfile Plugin Interface");
-        }
-    }
-    return return_value;
-}
-
-// ============================= COM-RPC Test Cases =============================
-
-// Test case to validate GetHDCPStatus using COM-RPC
-TEST_F(HdcpProfile_L2Test, GetHDCPStatus_COMRPC)
-{
-    if (CreateHdcpProfileInterfaceObject() != Core::ERROR_NONE) {
-        TEST_LOG("Invalid HdcpProfile_Client");
-    } else {
-        EXPECT_TRUE(m_controller_hdcpProfile != nullptr);
-        if (m_controller_hdcpProfile) {
-            EXPECT_TRUE(m_hdcpProfilePlugin != nullptr);
-            if (m_hdcpProfilePlugin) {
-    
     TEST_LOG("Testing GetHDCPStatus via COM-RPC");
     
-    HDCPStatus hdcpStatus;
+    if (CreateHdcpProfileInterfaceObjectUsingComRPCConnection() != Core::ERROR_NONE) {
+        FAIL() << "Failed to create HdcpProfile COM-RPC interface";
+    }
+    
+    ASSERT_NE(m_controller_HdcpProfile, nullptr);
+    ASSERT_NE(m_HdcpProfileplugin, nullptr);
+    
+    IHdcpProfile::HDCPStatus hdcpStatus;
     bool success = false;
     
-    uint32_t result = m_hdcpProfilePlugin->GetHDCPStatus(hdcpStatus, success);
+    uint32_t result = m_HdcpProfileplugin->GetHDCPStatus(hdcpStatus, success);
     
     EXPECT_EQ(result, Core::ERROR_NONE);
-    if (result != Core::ERROR_NONE) {
-        std::string errorMsg = "COM-RPC returned error " + std::to_string(result) + " (" + std::string(Core::ErrorToString(result)) + ")";
-        TEST_LOG("Err: %s", errorMsg.c_str());
-    }
-    else{
-        TEST_LOG("GetHDCPStatus COM-RPC call succeeded with result: %d", result);
-    }
     EXPECT_TRUE(success);
+    EXPECT_TRUE(hdcpStatus.isConnected);
+    EXPECT_FALSE(hdcpStatus.supportedHDCPVersion.empty());
     
     TEST_LOG("HDCP Status:");
     TEST_LOG("  isConnected: %d", hdcpStatus.isConnected);
@@ -854,17 +488,139 @@ TEST_F(HdcpProfile_L2Test, GetHDCPStatus_COMRPC)
     TEST_LOG("  receiverHDCPVersion: %s", hdcpStatus.receiverHDCPVersion.c_str());
     TEST_LOG("  currentHDCPVersion: %s", hdcpStatus.currentHDCPVersion.c_str());
     
-    // Validate basic expectations
-    EXPECT_TRUE(hdcpStatus.isConnected);
-    EXPECT_FALSE(hdcpStatus.supportedHDCPVersion.empty());
+    m_HdcpProfileplugin->Release();
+    m_controller_HdcpProfile->Release();
+}
 
-                m_hdcpProfilePlugin->Release();
-            } else {
-                TEST_LOG("m_hdcpProfilePlugin is NULL");
-            }
-            m_controller_hdcpProfile->Release();
-        } else {
-            TEST_LOG("m_controller_hdcpProfile is NULL");
-        }
+/**
+ * @brief Test Register and Unregister via COM-RPC
+ */
+TEST_F(HdcpProfile_L2test, RegisterUnregister_COMRPC)
+{
+    TEST_LOG("Testing Register and Unregister via COM-RPC");
+    
+    if (CreateHdcpProfileInterfaceObjectUsingComRPCConnection() != Core::ERROR_NONE) {
+        FAIL() << "Failed to create HdcpProfile COM-RPC interface";
     }
+    
+    ASSERT_NE(m_controller_HdcpProfile, nullptr);
+    ASSERT_NE(m_HdcpProfileplugin, nullptr);
+    
+    // Register for notifications
+    uint32_t result = m_HdcpProfileplugin->Register(&notify);
+    EXPECT_EQ(result, Core::ERROR_NONE);
+    TEST_LOG("Successfully registered for notifications");
+    
+    // Unregister from notifications
+    result = m_HdcpProfileplugin->Unregister(&notify);
+    EXPECT_EQ(result, Core::ERROR_NONE);
+    TEST_LOG("Successfully unregistered from notifications");
+    
+    m_HdcpProfileplugin->Release();
+    m_controller_HdcpProfile->Release();
+}
+
+/**
+ * @brief Test onDisplayConnectionChanged notification via HDMI hotplug event
+ */
+TEST_F(HdcpProfile_L2test, OnDisplayConnectionChanged_HdmiHotplug_COMRPC)
+{
+    TEST_LOG("Testing onDisplayConnectionChanged notification via HDMI hotplug");
+    
+    if (CreateHdcpProfileInterfaceObjectUsingComRPCConnection() != Core::ERROR_NONE) {
+        FAIL() << "Failed to create HdcpProfile COM-RPC interface";
+    }
+    
+    ASSERT_NE(m_controller_HdcpProfile, nullptr);
+    ASSERT_NE(m_HdcpProfileplugin, nullptr);
+    
+    // Register for notifications
+    uint32_t result = m_HdcpProfileplugin->Register(&notify);
+    EXPECT_EQ(result, Core::ERROR_NONE);
+    TEST_LOG("Successfully registered for notifications");
+    
+    // Reset event flag
+    notify.ResetEvent();
+    
+    // Trigger HDMI hotplug event via HAL callback
+    if (m_dsHdmiHotPlugCallback != nullptr) {
+        TEST_LOG("Triggering HDMI hotplug event (CONNECTED)");
+        m_dsHdmiHotPlugCallback(dsHDMI_HOTPLUG_CONNECTED, nullptr);
+        
+        // Wait for notification
+        uint32_t eventStatus = notify.WaitForRequestStatus(EVNT_TIMEOUT, HdcpProfile_OnDisplayConnectionChanged);
+        
+        EXPECT_NE(eventStatus, HdcpProfile_StateInvalid);
+        if (eventStatus != HdcpProfile_StateInvalid) {
+            TEST_LOG("onDisplayConnectionChanged notification received successfully");
+            
+            IHdcpProfile::HDCPStatus receivedStatus = notify.GetLastHdcpStatus();
+            EXPECT_TRUE(receivedStatus.isConnected);
+            EXPECT_FALSE(receivedStatus.supportedHDCPVersion.empty());
+        } else {
+            TEST_LOG("Timeout waiting for onDisplayConnectionChanged notification");
+        }
+    } else {
+        TEST_LOG("WARNING: dsHdmiHotPlugCallback not captured, skipping event trigger");
+    }
+    
+    // Unregister
+    result = m_HdcpProfileplugin->Unregister(&notify);
+    EXPECT_EQ(result, Core::ERROR_NONE);
+    
+    m_HdcpProfileplugin->Release();
+    m_controller_HdcpProfile->Release();
+}
+
+/**
+ * @brief Test onDisplayConnectionChanged notification via HDCP status change event
+ */
+TEST_F(HdcpProfile_L2test, OnDisplayConnectionChanged_HdcpStatusChange_COMRPC)
+{
+    TEST_LOG("Testing onDisplayConnectionChanged notification via HDCP status change");
+    
+    if (CreateHdcpProfileInterfaceObjectUsingComRPCConnection() != Core::ERROR_NONE) {
+        FAIL() << "Failed to create HdcpProfile COM-RPC interface";
+    }
+    
+    ASSERT_NE(m_controller_HdcpProfile, nullptr);
+    ASSERT_NE(m_HdcpProfileplugin, nullptr);
+    
+    // Register for notifications
+    uint32_t result = m_HdcpProfileplugin->Register(&notify);
+    EXPECT_EQ(result, Core::ERROR_NONE);
+    TEST_LOG("Successfully registered for notifications");
+    
+    // Reset event flag
+    notify.ResetEvent();
+    
+    // Trigger HDCP status change event via HAL callback
+    if (m_dsHdcpStatusCallback != nullptr) {
+        TEST_LOG("Triggering HDCP status change event (AUTHENTICATED)");
+        m_dsHdcpStatusCallback(1, dsHDCP_STATUS_AUTHENTICATED, nullptr);
+        
+        // Wait for notification
+        uint32_t eventStatus = notify.WaitForRequestStatus(EVNT_TIMEOUT, HdcpProfile_OnDisplayConnectionChanged);
+        
+        EXPECT_NE(eventStatus, HdcpProfile_StateInvalid);
+        if (eventStatus != HdcpProfile_StateInvalid) {
+            TEST_LOG("onDisplayConnectionChanged notification received successfully");
+            
+            IHdcpProfile::HDCPStatus receivedStatus = notify.GetLastHdcpStatus();
+            EXPECT_TRUE(receivedStatus.isConnected);
+            EXPECT_TRUE(receivedStatus.isHDCPCompliant);
+            EXPECT_FALSE(receivedStatus.supportedHDCPVersion.empty());
+        } else {
+            TEST_LOG("Timeout waiting for onDisplayConnectionChanged notification");
+        }
+    } else {
+        TEST_LOG("WARNING: dsHdcpStatusCallback not captured, skipping event trigger");
+    }
+    
+    // Unregister
+    result = m_HdcpProfileplugin->Unregister(&notify);
+    EXPECT_EQ(result, Core::ERROR_NONE);
+    
+    m_HdcpProfileplugin->Release();
+    m_controller_HdcpProfile->Release();
 }
