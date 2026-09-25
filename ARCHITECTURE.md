@@ -2,7 +2,7 @@
 
 ## Overview
 
-The HdcpProfile plugin is a WPEFramework (Thunder) service plugin that provides HDCP (High-bandwidth Digital Content Protection) status monitoring and management capabilities for RDK devices. The plugin integrates with the Device Settings (DS) HAL to retrieve HDCP protocol information and monitor display connection changes.
+The HdcpProfile plugin is a Thunder service plugin that provides HDCP (High-bandwidth Digital Content Protection) status monitoring and management capabilities for RDK devices. The plugin integrates with the Device Settings (DS) HAL to retrieve HDCP protocol information and monitor display connection changes.
 
 ## System Architecture
 
@@ -10,8 +10,8 @@ The HdcpProfile plugin is a WPEFramework (Thunder) service plugin that provides 
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│           WPEFramework Plugin Host                  │
-│              (Thunder R4.x)                         │
+│            Thunder Plugin Host                       │
+│              (Thunder R5.x)                         │
 └──────────────────┬──────────────────────────────────┘
                    │
          ┌─────────▼──────────┐
@@ -41,7 +41,7 @@ The HdcpProfile plugin is a WPEFramework (Thunder) service plugin that provides 
 
 **Location:** `plugin/HdcpProfile.cpp`
 
-The plugin proxy manages the lifecycle and communication bridge between the WPEFramework and the implementation service. Key responsibilities:
+The plugin proxy manages the lifecycle and communication bridge between the Thunder and the implementation service. Key responsibilities:
 
 - **Initialization:** Creates and configures the out-of-process implementation service
 - **Registration:** Registers JSON-RPC interfaces for external communication

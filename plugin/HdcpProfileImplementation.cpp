@@ -34,9 +34,9 @@
  #define API_VERSION_NUMBER_MINOR 0
  #define API_VERSION_NUMBER_PATCH 9
  
- using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
+ using PowerState = Thunder::Exchange::IPowerManager::PowerState;
  
- namespace WPEFramework
+ namespace Thunder
  {
      namespace Plugin
      {
@@ -135,8 +135,8 @@
          void HdcpProfileImplementation::OnHDCPStatusChange(dsHdcpStatus_t hdcpStatus)
          {
              uint32_t res = Core::ERROR_GENERAL;
-             PowerState pwrStateCur = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
-             PowerState pwrStatePrev = WPEFramework::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+             PowerState pwrStateCur = Thunder::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
+             PowerState pwrStatePrev = Thunder::Exchange::IPowerManager::POWER_STATE_UNKNOWN;
 
              HdcpProfileImplementation* instance = HdcpProfileImplementation::_instance;
              
@@ -365,4 +365,4 @@
         
  
      } // namespace Plugin
- } // namespace WPEFramework
+ } // namespace Thunder

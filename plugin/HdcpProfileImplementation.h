@@ -34,7 +34,7 @@
 
  #include "PowerManagerInterface.h"
  
- namespace WPEFramework
+ namespace Thunder
  {
      namespace Plugin
      {
@@ -94,11 +94,7 @@
              public:
                  static Core::ProxyType<Core::IDispatch> Create(HdcpProfileImplementation *hdcpProfileImplementation, Event event, HDCPStatus params)
                  {
- #ifndef USE_THUNDER_R4
-                     return (Core::proxy_cast<Core::IDispatch>(Core::ProxyType<Job>::Create(hdcpProfileImplementation, event, params)));
- #else
                      return (Core::ProxyType<Core::IDispatch>(Core::ProxyType<Job>::Create(hdcpProfileImplementation, event, params)));
- #endif
                  }
                  virtual void Dispatch()
                  {
@@ -148,4 +144,4 @@
          };
  
      } // namespace Plugin
- } // namespace WPEFramework
+ } // namespace Thunder

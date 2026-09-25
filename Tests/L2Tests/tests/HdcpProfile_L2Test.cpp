@@ -34,10 +34,10 @@
     fflush(stderr);
 
 using ::testing::NiceMock;
-using namespace WPEFramework;
+using namespace Thunder;
 using testing::StrictMock;
-using HDCPStatus = WPEFramework::Exchange::IHdcpProfile::HDCPStatus;
-using PowerState = WPEFramework::Exchange::IPowerManager::PowerState;
+using HDCPStatus = Thunder::Exchange::IHdcpProfile::HDCPStatus;
+using PowerState = Thunder::Exchange::IPowerManager::PowerState;
 
 // Event flags for different HDCP events
 typedef enum : uint32_t {

@@ -41,7 +41,7 @@
 #include "HdcpProfileImplementation.h"
 
 #define TEST_LOG(x, ...) fprintf(stderr, "\033[1;32m[%s:%d](%s)<PID:%d><TID:%d>" x "\n\033[0m", __FILE__, __LINE__, __FUNCTION__, getpid(), gettid(), ##__VA_ARGS__); fflush(stderr);
-using namespace WPEFramework;
+using namespace Thunder;
 
 using ::testing::NiceMock;
 
@@ -85,18 +85,8 @@ protected:
                     return &comLinkMock;
                 }));
 
-#ifdef USE_THUNDER_R4
-        ON_CALL(comLinkMock, Instantiate(::testing::_, ::testing::_, ::testing::_))
-            .WillByDefault(::testing::Invoke(
-                    [&](const RPC::Object& object, const uint32_t waitTime, uint32_t& connectionId) {
-                        hdcpProfileImpl = Core::ProxyType<Plugin::HdcpProfileImplementation>::Create();
-                        TEST_LOG("Pass created hdcpProfileImpl: %p ", &hdcpProfileImpl);
-                        return &hdcpProfileImpl;
-                }));
-#else
         ON_CALL(comLinkMock, Instantiate(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
              .WillByDefault(::testing::Return(hdcpProfileImpl));
-#endif /*USE_THUNDER_R4 */
 
         PluginHost::IFactories::Assign(&factoriesImplementation);
 

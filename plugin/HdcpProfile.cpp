@@ -23,7 +23,7 @@
 #define API_VERSION_NUMBER_MINOR 0
 #define API_VERSION_NUMBER_PATCH 9
 
-namespace WPEFramework
+namespace Thunder
 {
 
     namespace {
@@ -93,7 +93,7 @@ namespace WPEFramework
                 // Register for notifications
                 _hdcpProfile->Register(&_hdcpProfileNotification);
                 
-                // Invoking Plugin API register to wpeframework
+                // Invoking Plugin API register to thunder
                 Exchange::JHdcpProfile::Register(*this, _hdcpProfile);
             }
             else
@@ -175,4 +175,4 @@ namespace WPEFramework
             }
         }
     } // namespace Plugin
-} // namespace WPEFramework
+} // namespace Thunder

@@ -26,11 +26,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 find_package(${NAMESPACE}Plugins REQUIRED)
 find_package(${NAMESPACE}Helpers REQUIRED)
-if (USE_THUNDER_R4)
-    find_package(${NAMESPACE}COM REQUIRED)
-else ()
-    find_package(${NAMESPACE}Protocols REQUIRED)
-endif (USE_THUNDER_R4)
+find_package(${NAMESPACE}Protocols REQUIRED)
 
 add_library(${MODULE_NAME} SHARED
         HdcpProfile.cpp
@@ -63,11 +59,7 @@ set_target_properties(${PLUGIN_IMPLEMENTATION} PROPERTIES
         CXX_STANDARD_REQUIRED YES)	
 		
 
-if (USE_THUNDER_R4)
-target_link_libraries(${PLUGIN_IMPLEMENTATION} PRIVATE ${NAMESPACE}COM::${NAMESPACE}COM)
-else ()
 target_link_libraries(${PLUGIN_IMPLEMENTATION} PRIVATE ${NAMESPACE}Protocols::${NAMESPACE}Protocols)
-endif (USE_THUNDER_R4)
 
 find_package(DS)
 find_package(CEC)
