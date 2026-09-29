@@ -55,8 +55,7 @@ namespace WPEFramework
         HdcpProfileImplementation::~HdcpProfileImplementation()
         {
             LOGINFO("Call HdcpProfileImplementation destructor\n");
-            // COM-RPC: notifications are unregistered in OnDeviceSettingsDeactivated()
-            // which is called by DSHelper::Close()
+            DSHelper::Close();
             if (_powerManagerPlugin) {
                _powerManagerPlugin.Reset();
             }
