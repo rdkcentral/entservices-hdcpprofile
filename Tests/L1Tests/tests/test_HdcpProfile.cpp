@@ -29,6 +29,9 @@
 #include "PowerManagerMock.h"
 
 #include <iostream>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <cstdio>
@@ -61,6 +64,9 @@ protected:
     NiceMock<ServiceMock> service;
     PLUGINHOST_DISPATCHER* dispatcher;
     Core::ProxyType<WorkerPoolImplementation> workerPool;
+    std::mutex deviceSettingsMutex;
+    std::condition_variable deviceSettingsCondition;
+    uint8_t deviceSettingsRegistrations = 0;
 
     NiceMock<FactoriesImplementation> factoriesImplementation;
 
@@ -89,6 +95,29 @@ protected:
                         0,
                         0,
                         "1080p"});
+                    return Core::ERROR_NONE;
+                }));
+
+        ON_CALL(DeviceSettingsVideoPortMock::Mock(), Register(
+            ::testing::_, ::testing::Matcher<Exchange::IDeviceSettingsVideoPort::INotification*>(::testing::_)))
+            .WillByDefault(::testing::Invoke(
+                [this](const string, Exchange::IDeviceSettingsVideoPort::INotification*) {
+                    {
+                        std::lock_guard<std::mutex> lock(deviceSettingsMutex);
+                        ++deviceSettingsRegistrations;
+                    }
+                    deviceSettingsCondition.notify_one();
+                    return Core::ERROR_NONE;
+                }));
+        ON_CALL(DeviceSettingsDisplayMock::Mock(), Register(
+            ::testing::_, ::testing::Matcher<Exchange::IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification*>(::testing::_)))
+            .WillByDefault(::testing::Invoke(
+                [this](const string, Exchange::IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification*) {
+                    {
+                        std::lock_guard<std::mutex> lock(deviceSettingsMutex);
+                        ++deviceSettingsRegistrations;
+                    }
+                    deviceSettingsCondition.notify_one();
                     return Core::ERROR_NONE;
                 }));
 
@@ -139,6 +168,12 @@ protected:
         dispatcher->Activate(&service);
 
         EXPECT_EQ(string(""), plugin->Initialize(&service));
+
+        std::unique_lock<std::mutex> lock(deviceSettingsMutex);
+        EXPECT_TRUE(deviceSettingsCondition.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [this]() { return deviceSettingsRegistrations == 2; }));
     }
 
     virtual ~HDCPProfileTest() override
