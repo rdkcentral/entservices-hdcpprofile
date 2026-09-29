@@ -86,7 +86,7 @@ public:
     HdcpProfileNotificationHandler() : m_event_signalled(HdcpProfile_StateInvalid) {}
     ~HdcpProfileNotificationHandler() {}
 
-    void onDisplayConnectionChanged(const IHdcpProfile::HDCPStatus& hdcpStatus) override {
+    void OnDisplayConnectionChanged(const IHdcpProfile::HDCPStatus hdcpStatus) override {
         TEST_LOG("onDisplayConnectionChanged event triggered ***\n");
         std::unique_lock<std::mutex> lock(m_mutex);
 
@@ -376,32 +376,25 @@ HdcpProfile_L2test::~HdcpProfile_L2test() {
  * @brief Create HdcpProfile interface object using COM-RPC connection
  */
 uint32_t HdcpProfile_L2test::CreateHdcpProfileInterfaceObjectUsingComRPCConnection() {
-    string token;
-    // Get the Controller for HdcpProfile plugin
-    auto interface = m_controller->QueryInterfaceByCallsign<PluginHost::IShell>(HDCPPROFILE_CALLSIGN);
-    if (interface == nullptr) {
-        TEST_LOG("Failed to get Controller for HdcpProfile plugin");
+    Core::ProxyType<RPC::InvokeServerType<1, 0, 4>> engine =
+        Core::ProxyType<RPC::InvokeServerType<1, 0, 4>>::Create();
+    Core::ProxyType<RPC::CommunicatorClient> client =
+        Core::ProxyType<RPC::CommunicatorClient>::Create(
+            Core::NodeId("/tmp/communicator"),
+            Core::ProxyType<Core::IIPCServer>(engine));
+
+    if (!client.IsValid()) {
         return Core::ERROR_UNAVAILABLE;
     }
 
-    m_controller_HdcpProfile = interface;
-    if (m_controller_HdcpProfile->State() != PluginHost::IShell::ACTIVATED) {
-        const uint32_t result = m_controller_HdcpProfile->Activate(PluginHost::IShell::REQUESTED);
-        if (result != Core::ERROR_NONE) {
-            TEST_LOG("Failed to activate HdcpProfile plugin: %d", result);
-            return result;
-        }
+    m_controller_HdcpProfile = client->Open<PluginHost::IShell>(
+        _T("org.rdk.HdcpProfile"), ~0, 3000);
+    if (m_controller_HdcpProfile == nullptr) {
+        return Core::ERROR_UNAVAILABLE;
     }
 
-    /* Get the HdcpProfile interface */
     m_HdcpProfileplugin = m_controller_HdcpProfile->QueryInterface<Exchange::IHdcpProfile>();
-    if (m_HdcpProfileplugin == nullptr) {
-        TEST_LOG("Failed to get IHdcpProfile interface");
-        return Core::ERROR_UNAVAILABLE;
-    }
-
-    TEST_LOG("Successfully created HdcpProfile COM-RPC interface");
-    return Core::ERROR_NONE;
+    return (m_HdcpProfileplugin != nullptr) ? Core::ERROR_NONE : Core::ERROR_UNAVAILABLE;
 }
 
 /**
@@ -598,7 +591,7 @@ TEST_F(HdcpProfile_L2test, OnDisplayConnectionChanged_HdcpStatusChange_COMRPC)
     // Trigger HDCP status change event via HAL callback
     if (m_dsHdcpStatusCallback != nullptr) {
         TEST_LOG("Triggering HDCP status change event (AUTHENTICATED)");
-        m_dsHdcpStatusCallback(1, dsHDCP_STATUS_AUTHENTICATED, nullptr);
+        m_dsHdcpStatusCallback(1, dsHDCP_STATUS_AUTHENTICATED);
         
         // Wait for notification
         uint32_t eventStatus = notify.WaitForRequestStatus(EVNT_TIMEOUT, HdcpProfile_OnDisplayConnectionChanged);
