@@ -44,6 +44,7 @@ namespace WPEFramework
         HdcpProfileImplementation::HdcpProfileImplementation()
         : _DSVideoPortNotification(*this)
         , _DSDisplayHotPlugNotification(*this)
+        , _deviceSettingsNotificationsRegistered(false)
         , _adminLock()
         , mShell(nullptr)
         , _service(nullptr)
@@ -55,6 +56,7 @@ namespace WPEFramework
         HdcpProfileImplementation::~HdcpProfileImplementation()
         {
             LOGINFO("Call HdcpProfileImplementation destructor\n");
+            OnDeviceSettingsDeactivated();
             DSHelper::Close();
             if (_powerManagerPlugin) {
                _powerManagerPlugin.Reset();
@@ -95,6 +97,7 @@ namespace WPEFramework
                     // COM-RPC: device::Host::Register(IVideoOutputPortEvents) → vp->Register(INotification)
                     vp->Register("HdcpProfile", &_DSVideoPortNotification);
                     vp->Release();
+                    _deviceSettingsNotificationsRegistered = true;
                     LOGINFO("HdcpProfileImplementation: IDeviceSettingsVideoPort::INotification registered");
                 }
                 else {
@@ -109,6 +112,7 @@ namespace WPEFramework
                 if (display != nullptr) {
                     display->Register("HdcpProfile", &_DSDisplayHotPlugNotification);
                     display->Release();
+                    _deviceSettingsNotificationsRegistered = true;
                     LOGINFO("HdcpProfileImplementation: IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification registered");
                 }
                 else {
@@ -127,6 +131,10 @@ namespace WPEFramework
         {
             LOGINFO("HdcpProfileImplementation: OnDeviceSettingsDeactivated — unregistering DS notifications");
 
+            if (!_deviceSettingsNotificationsRegistered) {
+                return;
+            }
+
             {
                 auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
                 if (vp != nullptr) {
@@ -141,6 +149,7 @@ namespace WPEFramework
                     display->Release();
                 }
             }
+            _deviceSettingsNotificationsRegistered = false;
             // Port handles are cleared by the base class after OnDeviceSettingsDeactivated() returns.
         }
 
