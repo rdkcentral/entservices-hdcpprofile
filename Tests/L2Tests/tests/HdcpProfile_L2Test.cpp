@@ -376,25 +376,40 @@ HdcpProfile_L2test::~HdcpProfile_L2test() {
  * @brief Create HdcpProfile interface object using COM-RPC connection
  */
 uint32_t HdcpProfile_L2test::CreateHdcpProfileInterfaceObjectUsingComRPCConnection() {
-    Core::ProxyType<RPC::InvokeServerType<1, 0, 4>> engine =
-        Core::ProxyType<RPC::InvokeServerType<1, 0, 4>>::Create();
-    Core::ProxyType<RPC::CommunicatorClient> client =
-        Core::ProxyType<RPC::CommunicatorClient>::Create(
-            Core::NodeId("/tmp/communicator"),
-            Core::ProxyType<Core::IIPCServer>(engine));
+    Core::ProxyType<RPC::InvokeServerType<1, 0, 4>> hdcpProfileEngine;
+    Core::ProxyType<RPC::CommunicatorClient> hdcpProfileClient;
 
-    if (!client.IsValid()) {
+    hdcpProfileEngine = Core::ProxyType<RPC::InvokeServerType<1, 0, 4>>::Create();
+    hdcpProfileClient = Core::ProxyType<RPC::CommunicatorClient>::Create(
+        Core::NodeId("/tmp/communicator"), Core::ProxyType<Core::IIPCServer>(hdcpProfileEngine));
+    if (!hdcpProfileClient.IsValid()) {
+        TEST_LOG("Failed to create HdcpProfile COM-RPC client");
         return Core::ERROR_UNAVAILABLE;
     }
 
-    m_controller_HdcpProfile = client->Open<PluginHost::IShell>(
-        _T("org.rdk.HdcpProfile"), ~0, 3000);
+    m_controller_HdcpProfile = hdcpProfileClient->Open<PluginHost::IShell>(HDCPPROFILE_CALLSIGN, ~0, COM_TIMEOUT);
     if (m_controller_HdcpProfile == nullptr) {
+        TEST_LOG("Failed to get Controller for HdcpProfile plugin");
         return Core::ERROR_UNAVAILABLE;
     }
 
+    if (m_controller_HdcpProfile->State() != PluginHost::IShell::ACTIVATED) {
+        const uint32_t result = m_controller_HdcpProfile->Activate(PluginHost::IShell::REQUESTED);
+        if (result != Core::ERROR_NONE) {
+            TEST_LOG("Failed to activate HdcpProfile plugin: %d", result);
+            return result;
+        }
+    }
+
+    /* Get the HdcpProfile interface */
     m_HdcpProfileplugin = m_controller_HdcpProfile->QueryInterface<Exchange::IHdcpProfile>();
-    return (m_HdcpProfileplugin != nullptr) ? Core::ERROR_NONE : Core::ERROR_UNAVAILABLE;
+    if (m_HdcpProfileplugin == nullptr) {
+        TEST_LOG("Failed to get IHdcpProfile interface");
+        return Core::ERROR_UNAVAILABLE;
+    }
+
+    TEST_LOG("Successfully created HdcpProfile COM-RPC interface");
+    return Core::ERROR_NONE;
 }
 
 /**
