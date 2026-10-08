@@ -56,6 +56,23 @@ namespace WPEFramework
         HdcpProfileImplementation::~HdcpProfileImplementation()
         {
             LOGINFO("Call HdcpProfileImplementation destructor\n");
+            // Unregister DS notification sinks while sub-interfaces are still live —
+            // OnDeviceSettingsDeactivated() cannot do this (root is already gone by then),
+            // and the sub-interface cache being released by Close() does not unregister
+            // sinks on the remote DeviceSettings object, leaving a dangling pointer there.
+            if (_deviceSettingsNotificationsRegistered) {
+                auto* vp = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsVideoPort>();
+                if (vp != nullptr) {
+                    vp->Unregister(&_DSVideoPortNotification);
+                    vp->Release();
+                }
+                auto* display = DSHelper::AcquireSubInterface<Exchange::IDeviceSettingsDisplay>();
+                if (display != nullptr) {
+                    display->Unregister(&_DSDisplayHotPlugNotification);
+                    display->Release();
+                }
+                _deviceSettingsNotificationsRegistered = false;
+            }
             DSHelper::Close();
             if (_powerManagerPlugin) {
                _powerManagerPlugin.Reset();
