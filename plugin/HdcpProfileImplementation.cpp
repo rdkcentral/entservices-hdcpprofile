@@ -56,7 +56,6 @@ namespace WPEFramework
         HdcpProfileImplementation::~HdcpProfileImplementation()
         {
             LOGINFO("Call HdcpProfileImplementation destructor\n");
-            OnDeviceSettingsDeactivated();
             DSHelper::Close();
             if (_powerManagerPlugin) {
                _powerManagerPlugin.Reset();
