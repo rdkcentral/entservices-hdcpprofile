@@ -86,7 +86,7 @@ public:
     HdcpProfileNotificationHandler() : m_event_signalled(HdcpProfile_StateInvalid) {}
     ~HdcpProfileNotificationHandler() {}
 
-    void onDisplayConnectionChanged(const IHdcpProfile::HDCPStatus& hdcpStatus) override {
+    void OnDisplayConnectionChanged(const IHdcpProfile::HDCPStatus hdcpStatus) override {
         TEST_LOG("onDisplayConnectionChanged event triggered ***\n");
         std::unique_lock<std::mutex> lock(m_mutex);
 
@@ -137,14 +137,41 @@ protected:
     Core::JSONRPC::Message message;
     string response;
 
+    void ActivateAndWait(const char* callsign)
+    {
+        std::string state;
+        if ((GetPluginState(callsign, state) == Core::ERROR_NONE) && (state == "activated")) {
+            return;
+        }
+
+        (void)ActivateServiceWithRetry(callsign, 3, 500);
+        EXPECT_EQ(Core::ERROR_NONE, WaitForPluginState(callsign, "activated", 10000));
+    }
+
+    void DeactivateAndWait(const char* callsign)
+    {
+        std::string state;
+        const uint32_t stateStatus = GetPluginState(callsign, state);
+        EXPECT_EQ(Core::ERROR_NONE, stateStatus);
+        if (stateStatus != Core::ERROR_NONE || state == "deactivated") {
+            return;
+        }
+
+        if (state == "activated" || state == "suspended") {
+            (void)DeactivateService(callsign);
+        }
+
+        EXPECT_EQ(Core::ERROR_NONE, WaitForPluginState(callsign, "deactivated", 10000));
+    }
+
     virtual ~HdcpProfile_L2test() override;
 
 public:
     HdcpProfile_L2test();
     
     // Captured from HAL callbacks - used to simulate HAL events
-    dsHdcpStatusCallback_t m_dsHdcpStatusCallback = nullptr;
-    dsHdmiHotPlugEventCallback_t m_dsHdmiHotPlugCallback = nullptr;
+    dsHDCPStatusCallback_t m_dsHdcpStatusCallback = nullptr;
+    dsDisplayEventCallback_t m_dsDisplayEventCallback = nullptr;
     
     // HAL Mocks are now provided by L2TestsMock parent class:
     // - p_dsVideoPortHalMock
@@ -184,8 +211,9 @@ protected:
  */
 HdcpProfile_L2test::HdcpProfile_L2test()
     : L2TestMocks() {
-    uint32_t status = Core::ERROR_GENERAL;
     m_event_signalled = HdcpProfile_StateInvalid;
+    m_controller_HdcpProfile = nullptr;
+    m_HdcpProfileplugin = nullptr;
 
     // TelemetryApi mock is already registered by L2TestMocks (p_telemetryApiImplMock);
     // calling TelemetryApi::setImpl() again here would fail the (nullptr == impl) guard.
@@ -204,16 +232,7 @@ HdcpProfile_L2test::HdcpProfile_L2test()
     // HdcpProfile plugin uses IDeviceSettingsVideoPort and IDeviceSettingsDisplay interfaces
     // So we need VideoPort, Display, and Host HAL mocks
     
-    // 1. Host HAL Mock - Default video port name
-    ON_CALL(*p_dsHostHalMock, dsGetDefaultVideoPortName(::testing::_))
-        .WillByDefault(::testing::Invoke(
-            [](dsVideoPortType_t* portType) {
-                if (portType) { *portType = dsVIDEOPORT_TYPE_HDMI; }
-                return dsERR_NONE;
-            }));
-    TEST_LOG("DsHostApi HdcpProfile-specific behaviors configured");
-    
-    // 2. VideoPort HAL Mock - HDCP functionality
+    // 1. VideoPort HAL Mock - HDCP functionality
     ON_CALL(*p_dsVideoPortHalMock, dsGetVideoPort(::testing::_, ::testing::_, ::testing::_))
         .WillByDefault(::testing::Invoke(
             [](dsVideoPortType_t, int, intptr_t* handle) {
@@ -266,7 +285,7 @@ HdcpProfile_L2test::HdcpProfile_L2test()
     // Register callback to capture HDCP status change events
     ON_CALL(*p_dsVideoPortHalMock, dsRegisterHdcpStatusCallback(::testing::_, ::testing::_))
         .WillByDefault(::testing::Invoke(
-            [&](intptr_t, dsHdcpStatusCallback_t cbFunc) {
+            [&](intptr_t, dsHDCPStatusCallback_t cbFunc) {
                 m_dsHdcpStatusCallback = cbFunc;
                 TEST_LOG("Captured dsHdcpStatusCallback");
                 return dsERR_NONE;
@@ -274,7 +293,7 @@ HdcpProfile_L2test::HdcpProfile_L2test()
     
     TEST_LOG("DsVideoPortApi HdcpProfile-specific behaviors configured");
     
-    // 3. Display HAL Mock - HDMI hotplug functionality
+    // 2. Display HAL Mock - HDMI hotplug functionality
     ON_CALL(*p_dsDisplayHalMock, dsGetDisplay(::testing::_, ::testing::_, ::testing::_))
         .WillByDefault(::testing::Invoke(
             [](dsVideoPortType_t, int, intptr_t* handle) {
@@ -283,11 +302,11 @@ HdcpProfile_L2test::HdcpProfile_L2test()
             }));
     
     // Register callback to capture HDMI hotplug events
-    ON_CALL(*p_dsDisplayHalMock, dsRegisterHdmiHotPlugEventCallback(::testing::_, ::testing::_))
+    ON_CALL(*p_dsDisplayHalMock, dsRegisterDisplayEventCallback(::testing::_, ::testing::_))
         .WillByDefault(::testing::Invoke(
-            [&](intptr_t, dsHdmiHotPlugEventCallback_t cbFunc) {
-                m_dsHdmiHotPlugCallback = cbFunc;
-                TEST_LOG("Captured dsHdmiHotPlugEventCallback");
+            [&](intptr_t, dsDisplayEventCallback_t callback) {
+                m_dsDisplayEventCallback = callback;
+                TEST_LOG("Captured dsDisplayEventCallback");
                 return dsERR_NONE;
             }));
     
@@ -323,42 +342,23 @@ HdcpProfile_L2test::HdcpProfile_L2test()
                 return PWRMGR_SUCCESS;
             }));
 
+    ON_CALL(*p_powerManagerHalMock, PLAT_API_SetPowerState(::testing::_))
+        .WillByDefault(::testing::Return(PWRMGR_SUCCESS));
+
+    ON_CALL(*p_mfrMock, mfrGetTemperature(::testing::_, ::testing::_, ::testing::_))
+        .WillByDefault(::testing::Invoke(
+            [](mfrTemperatureState_t* state, int* temperature, int* wifiTemperature) {
+                *state = static_cast<mfrTemperatureState_t>(0);
+                *temperature = 90;
+                *wifiTemperature = 25;
+                return mfrERR_NONE;
+            }));
+
     TEST_LOG("PowerManager HAL mock setup complete");
 
-    // Activate DeviceSettings plugin first (required dependency for HdcpProfile)
-    TEST_LOG("Activating DeviceSettings plugin...");
-    status = ActivateService("org.rdk.DeviceSettings");
-    if (status != Core::ERROR_NONE) {
-        TEST_LOG("Failed to activate DeviceSettings: %d (%s)", status, Core::ErrorToString(status));
-    } else {
-        TEST_LOG("DeviceSettings activated successfully");
-        // Give DeviceSettings time to initialize
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    }
-
-    // Activate HdcpProfile plugin with retry mechanism
-    TEST_LOG("Activating HdcpProfile plugin...");
-    int retry_count = 0;
-    const int max_retries = 10;
-    status = Core::ERROR_GENERAL;
-    
-    while (status != Core::ERROR_NONE && retry_count < max_retries) {
-        status = ActivateService("org.rdk.HdcpProfile");
-        if (status != Core::ERROR_NONE) {
-            TEST_LOG("ActivateService attempt %d/%d returned: %d (%s)", 
-                     retry_count + 1, max_retries, status, Core::ErrorToString(status));
-            retry_count++;
-            if (retry_count < max_retries) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            }
-        } else {
-            TEST_LOG("ActivateService succeeded on attempt %d", retry_count + 1);
-        }
-    }
-    
-    if (status != Core::ERROR_NONE) {
-        TEST_LOG("Failed to activate HdcpProfile after %d attempts", max_retries);
-    }
+    ActivateAndWait("org.rdk.PowerManager");
+    ActivateAndWait("org.rdk.DeviceSettings");
+    ActivateAndWait("org.rdk.HdcpProfile");
 }
 
 /**
@@ -367,29 +367,38 @@ HdcpProfile_L2test::HdcpProfile_L2test()
 HdcpProfile_L2test::~HdcpProfile_L2test() {
     TEST_LOG("HdcpProfile_L2test Destructor");
     
-    // Deactivate plugins in reverse order
-    DeactivateService("org.rdk.HdcpProfile");
-    DeactivateService("org.rdk.DeviceSettings");
+    DeactivateAndWait("org.rdk.HdcpProfile");
+    DeactivateAndWait("org.rdk.DeviceSettings");
+    DeactivateAndWait("org.rdk.PowerManager");
 }
 
 /**
  * @brief Create HdcpProfile interface object using COM-RPC connection
  */
 uint32_t HdcpProfile_L2test::CreateHdcpProfileInterfaceObjectUsingComRPCConnection() {
-    string token;
-    // Get the Controller for HdcpProfile plugin
-    auto interface = m_controller->QueryInterfaceByCallsign<PluginHost::IShell>(HDCPPROFILE_CALLSIGN);
-    if (interface == nullptr) {
+    Core::ProxyType<RPC::InvokeServerType<1, 0, 4>> hdcpProfileEngine;
+    Core::ProxyType<RPC::CommunicatorClient> hdcpProfileClient;
+
+    hdcpProfileEngine = Core::ProxyType<RPC::InvokeServerType<1, 0, 4>>::Create();
+    hdcpProfileClient = Core::ProxyType<RPC::CommunicatorClient>::Create(
+        Core::NodeId("/tmp/communicator"), Core::ProxyType<Core::IIPCServer>(hdcpProfileEngine));
+    if (!hdcpProfileClient.IsValid()) {
+        TEST_LOG("Failed to create HdcpProfile COM-RPC client");
+        return Core::ERROR_UNAVAILABLE;
+    }
+
+    m_controller_HdcpProfile = hdcpProfileClient->Open<PluginHost::IShell>(HDCPPROFILE_CALLSIGN, ~0, COM_TIMEOUT);
+    if (m_controller_HdcpProfile == nullptr) {
         TEST_LOG("Failed to get Controller for HdcpProfile plugin");
         return Core::ERROR_UNAVAILABLE;
     }
 
-    m_controller_HdcpProfile = interface;
-    /* Activate the plugin */
-    auto result = m_controller_HdcpProfile->Activate(PluginHost::IShell::REQUESTED);
-    if (result != Core::ERROR_NONE) {
-        TEST_LOG("Failed to activate HdcpProfile plugin: %d", result);
-        return result;
+    if (m_controller_HdcpProfile->State() != PluginHost::IShell::ACTIVATED) {
+        const uint32_t result = m_controller_HdcpProfile->Activate(PluginHost::IShell::REQUESTED);
+        if (result != Core::ERROR_NONE) {
+            TEST_LOG("Failed to activate HdcpProfile plugin: %d", result);
+            return result;
+        }
     }
 
     /* Get the HdcpProfile interface */
@@ -543,9 +552,9 @@ TEST_F(HdcpProfile_L2test, OnDisplayConnectionChanged_HdmiHotplug_COMRPC)
     notify.ResetEvent();
     
     // Trigger HDMI hotplug event via HAL callback
-    if (m_dsHdmiHotPlugCallback != nullptr) {
+    if (m_dsDisplayEventCallback != nullptr) {
         TEST_LOG("Triggering HDMI hotplug event (CONNECTED)");
-        m_dsHdmiHotPlugCallback(dsHDMI_HOTPLUG_CONNECTED, nullptr);
+        m_dsDisplayEventCallback(1, dsDISPLAY_EVENT_CONNECTED, nullptr);
         
         // Wait for notification
         uint32_t eventStatus = notify.WaitForRequestStatus(EVNT_TIMEOUT, HdcpProfile_OnDisplayConnectionChanged);
@@ -597,7 +606,7 @@ TEST_F(HdcpProfile_L2test, OnDisplayConnectionChanged_HdcpStatusChange_COMRPC)
     // Trigger HDCP status change event via HAL callback
     if (m_dsHdcpStatusCallback != nullptr) {
         TEST_LOG("Triggering HDCP status change event (AUTHENTICATED)");
-        m_dsHdcpStatusCallback(1, dsHDCP_STATUS_AUTHENTICATED, nullptr);
+        m_dsHdcpStatusCallback(1, dsHDCP_STATUS_AUTHENTICATED);
         
         // Wait for notification
         uint32_t eventStatus = notify.WaitForRequestStatus(EVNT_TIMEOUT, HdcpProfile_OnDisplayConnectionChanged);

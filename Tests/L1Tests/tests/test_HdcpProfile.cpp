@@ -29,6 +29,9 @@
 #include "PowerManagerMock.h"
 
 #include <iostream>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <cstdio>
@@ -38,7 +41,6 @@
 
 // New COMRPC-based DeviceSettings mocks
 #include "DeviceSettingsMock.h"
-#include "DeviceSettingsHostMock.h"
 #include "DeviceSettingsVideoPortMock.h"
 #include "DeviceSettingsDisplayMock.h"
 
@@ -62,6 +64,9 @@ protected:
     NiceMock<ServiceMock> service;
     PLUGINHOST_DISPATCHER* dispatcher;
     Core::ProxyType<WorkerPoolImplementation> workerPool;
+    std::mutex deviceSettingsMutex;
+    std::condition_variable deviceSettingsCondition;
+    uint8_t deviceSettingsRegistrations = 0;
 
     NiceMock<FactoriesImplementation> factoriesImplementation;
 
@@ -79,6 +84,56 @@ protected:
                 [this]() {
                     TEST_LOG("Pass created comLinkMock: %p ", &comLinkMock);
                     return &comLinkMock;
+                }));
+
+        ON_CALL(DeviceSettingsMock::Mock(), GetDeviceSettingConfigs(::testing::_))
+            .WillByDefault(::testing::Invoke(
+                [](Exchange::IDeviceSettings::DeviceSettingConfigs& configs) {
+                    configs.videoPorts.push_back({
+                        static_cast<int32_t>(Exchange::IDeviceSettingsVideoPort::DS_VIDEO_PORT_TYPE_HDMI),
+                        0,
+                        0,
+                        0,
+                        "1080p"});
+                    return Core::ERROR_NONE;
+                }));
+
+        ON_CALL(DeviceSettingsVideoPortMock::Mock(), Register(
+            ::testing::_, ::testing::Matcher<Exchange::IDeviceSettingsVideoPort::INotification*>(::testing::_)))
+            .WillByDefault(::testing::Invoke(
+                [this](const string, Exchange::IDeviceSettingsVideoPort::INotification*) {
+                    {
+                        std::lock_guard<std::mutex> lock(deviceSettingsMutex);
+                        ++deviceSettingsRegistrations;
+                    }
+                    deviceSettingsCondition.notify_one();
+                    return Core::ERROR_NONE;
+                }));
+        ON_CALL(DeviceSettingsDisplayMock::Mock(), Register(
+            ::testing::_, ::testing::Matcher<Exchange::IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification*>(::testing::_)))
+            .WillByDefault(::testing::Invoke(
+                [this](const string, Exchange::IDeviceSettingsDisplay::IDisplayHDMIHotPlugNotification*) {
+                    {
+                        std::lock_guard<std::mutex> lock(deviceSettingsMutex);
+                        ++deviceSettingsRegistrations;
+                    }
+                    deviceSettingsCondition.notify_one();
+                    return Core::ERROR_NONE;
+                }));
+
+        ON_CALL(service, QueryInterface(::testing::_))
+            .WillByDefault(::testing::Invoke([](const uint32_t interfaceId) -> void* {
+                if (interfaceId == Exchange::IDeviceSettings::ID) {
+                    auto* root = DeviceSettingsMock::Get();
+                    root->AddRef();
+                    return root;
+                }
+                return nullptr;
+            }));
+        ON_CALL(service, Register(::testing::Matcher<PluginHost::IPlugin::INotification*>(::testing::_)))
+            .WillByDefault(::testing::Invoke(
+                [this](PluginHost::IPlugin::INotification* notification) {
+                    notification->Activated("org.rdk.DeviceSettings", &service);
                 }));
 
         // Setup DeviceSettings COMRPC mock
@@ -113,6 +168,12 @@ protected:
         dispatcher->Activate(&service);
 
         EXPECT_EQ(string(""), plugin->Initialize(&service));
+
+        std::unique_lock<std::mutex> lock(deviceSettingsMutex);
+        EXPECT_TRUE(deviceSettingsCondition.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [this]() { return deviceSettingsRegistrations == 2; }));
     }
 
     virtual ~HDCPProfileTest() override
@@ -152,15 +213,7 @@ TEST_F(HDCPProfileTest, RegisteredMethods)
 TEST_F(HDCPProfileTest, getHDCPStatus_isConnected_false)
 {
     // Setup DeviceSettings mocks
-    auto& hostMock = DeviceSettingsHostMock::Mock();
     auto& videoPortMock = DeviceSettingsVideoPortMock::Mock();
-
-    // Mock: GetDefaultVideoPortName returns "HDMI0"
-    ON_CALL(hostMock, GetDefaultVideoPortName(::testing::_))
-        .WillByDefault(::testing::Invoke([](string& portName) {
-            portName = "HDMI0";
-            return Core::ERROR_NONE;
-        }));
 
     // Mock: GetVideoPort returns handle 0 for HDMI0
     ON_CALL(videoPortMock, GetVideoPort(::testing::_, ::testing::_, ::testing::_))
@@ -209,15 +262,7 @@ TEST_F(HDCPProfileTest, getHDCPStatus_isConnected_false)
 TEST_F(HDCPProfileTest, getHDCPStatus_isConnected_true)
 {
     // Setup DeviceSettings mocks
-    auto& hostMock = DeviceSettingsHostMock::Mock();
     auto& videoPortMock = DeviceSettingsVideoPortMock::Mock();
-
-    // Mock: GetDefaultVideoPortName returns "HDMI0"
-    ON_CALL(hostMock, GetDefaultVideoPortName(::testing::_))
-        .WillByDefault(::testing::Invoke([](string& portName) {
-            portName = "HDMI0";
-            return Core::ERROR_NONE;
-        }));
 
     // Mock: GetVideoPort returns handle 0 for HDMI0
     ON_CALL(videoPortMock, GetVideoPort(::testing::_, ::testing::_, ::testing::_))
@@ -287,15 +332,7 @@ TEST_F(HDCPProfileTest, getHDCPStatus_isConnected_true)
 TEST_F(HDCPProfileTest, getSettopHDCPSupport_Hdcp_v1x)
 {
     // Setup DeviceSettings mocks
-    auto& hostMock = DeviceSettingsHostMock::Mock();
     auto& videoPortMock = DeviceSettingsVideoPortMock::Mock();
-
-    // Mock: GetDefaultVideoPortName returns "HDMI0"
-    ON_CALL(hostMock, GetDefaultVideoPortName(::testing::_))
-        .WillByDefault(::testing::Invoke([](string& portName) {
-            portName = "HDMI0";
-            return Core::ERROR_NONE;
-        }));
 
     // Mock: GetVideoPort returns handle 0 for HDMI0
     ON_CALL(videoPortMock, GetVideoPort(::testing::_, ::testing::_, ::testing::_))
@@ -322,15 +359,7 @@ TEST_F(HDCPProfileTest, getSettopHDCPSupport_Hdcp_v1x)
 TEST_F(HDCPProfileTest, getSettopHDCPSupport_Hdcp_v2x)
 {
     // Setup DeviceSettings mocks
-    auto& hostMock = DeviceSettingsHostMock::Mock();
     auto& videoPortMock = DeviceSettingsVideoPortMock::Mock();
-
-    // Mock: GetDefaultVideoPortName returns "HDMI0"
-    ON_CALL(hostMock, GetDefaultVideoPortName(::testing::_))
-        .WillByDefault(::testing::Invoke([](string& portName) {
-            portName = "HDMI0";
-            return Core::ERROR_NONE;
-        }));
 
     // Mock: GetVideoPort returns handle 0 for HDMI0
     ON_CALL(videoPortMock, GetVideoPort(::testing::_, ::testing::_, ::testing::_))
@@ -366,15 +395,7 @@ TEST_F(HDCPProfileEventTest, onDisplayConnectionChanged)
     Core::Event onDisplayConnectionChanged(false, true);
 
     // Setup DeviceSettings mocks
-    auto& hostMock = DeviceSettingsHostMock::Mock();
     auto& videoPortMock = DeviceSettingsVideoPortMock::Mock();
-
-    // Mock: GetDefaultVideoPortName returns "HDMI0"
-    ON_CALL(hostMock, GetDefaultVideoPortName(::testing::_))
-        .WillByDefault(::testing::Invoke([](string& portName) {
-            portName = "HDMI0";
-            return Core::ERROR_NONE;
-        }));
 
     // Mock: GetVideoPort returns handle 0 for HDMI0
     ON_CALL(videoPortMock, GetVideoPort(::testing::_, ::testing::_, ::testing::_))
@@ -469,15 +490,7 @@ TEST_F(HDCPProfileEventTest, onHdmiOutputHDCPStatusEvent)
     Core::Event onDisplayConnectionChanged(false, true);
 
     // Setup DeviceSettings mocks
-    auto& hostMock = DeviceSettingsHostMock::Mock();
     auto& videoPortMock = DeviceSettingsVideoPortMock::Mock();
-
-    // Mock: GetDefaultVideoPortName returns "HDMI0"
-    ON_CALL(hostMock, GetDefaultVideoPortName(::testing::_))
-        .WillByDefault(::testing::Invoke([](string& portName) {
-            portName = "HDMI0";
-            return Core::ERROR_NONE;
-        }));
 
     // Mock: GetVideoPort returns handle 0 for HDMI0
     ON_CALL(videoPortMock, GetVideoPort(::testing::_, ::testing::_, ::testing::_))

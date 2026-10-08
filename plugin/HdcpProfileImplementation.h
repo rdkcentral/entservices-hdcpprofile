@@ -193,6 +193,7 @@ namespace WPEFramework
             // Notification delegate instances
             Core::Sink<DSVideoPortNotification>    _DSVideoPortNotification;
             Core::Sink<DSDisplayHotPlugNotification> _DSDisplayHotPlugNotification;
+            bool _deviceSettingsNotificationsRegistered;
 
             mutable Core::CriticalSection _adminLock;
             PluginHost::IShell *mShell;
