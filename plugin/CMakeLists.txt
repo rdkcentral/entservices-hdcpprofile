@@ -25,7 +25,7 @@ set(PLUGIN_HDCPPROFILE_STARTUPORDER "" CACHE STRING "To configure startup order 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 find_package(${NAMESPACE}Plugins REQUIRED)
-find_package(${NAMESPACE}Helpers REQUIRED)
+find_package(${NAMESPACE}Helpers CONFIG REQUIRED)
 if (USE_THUNDER_R4)
     find_package(${NAMESPACE}COM REQUIRED)
 else ()
