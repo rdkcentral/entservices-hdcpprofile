@@ -38,7 +38,8 @@ if(SRC_FILES)
     target_compile_definitions(${MODULE_NAME}
                 PRIVATE
                 MODULE_NAME=Plugin_${PLUGIN_NAME}
-                THUNDER_PORT="${THUNDER_PORT}")
+                THUNDER_PORT="${THUNDER_PORT}"
+                DEVICESETTINGS_PLUGIN_MOCKS)
 
     target_compile_options(${MODULE_NAME} PRIVATE -Wno-error)
     target_link_libraries(${MODULE_NAME} PRIVATE ${NAMESPACE}Plugins::${NAMESPACE}Plugins)
@@ -60,6 +61,16 @@ if(SRC_FILES)
     else (MOCKACCESSOR_LIBRARIES)
          message ("Require ${MOCKACCESSOR_LIBRARIES} library")
     endif (MOCKACCESSOR_LIBRARIES)
+
+    # GTest-controllable stand-in for libds-hal (see DsVideoDeviceHalMock.h) — the real
+    # entservices-devicesettings plugin links against this instead of real hardware HAL.
+    find_library(DSHAL_LIBRARIES NAMES ds-hal)
+    if (DSHAL_LIBRARIES)
+        message ("Found ds-hal library - ${DSHAL_LIBRARIES}")
+        target_link_libraries(${MODULE_NAME} PRIVATE ${DSHAL_LIBRARIES})
+    else (DSHAL_LIBRARIES)
+         message ("Require ${DSHAL_LIBRARIES} library")
+    endif (DSHAL_LIBRARIES)
 
     target_include_directories(
         ${MODULE_NAME} PRIVATE ./
