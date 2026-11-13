@@ -171,6 +171,7 @@ namespace WPEFramework
 
         void HdcpProfileImplementation::onHdcpProfileDisplayConnectionChanged()
         {
+            LOGINFO("HDCP_TRACE onHdcpProfileDisplayConnectionChanged: requesting display connection notification");
             // Defer all COMRPC work to the worker thread via DispatchJob → Dispatch().
             dispatchEvent(HDCPPROFILE_EVENT_DISPLAYCONNECTIONCHANGED, HDCPStatus{});
         }
@@ -197,6 +198,7 @@ namespace WPEFramework
         void HdcpProfileImplementation::onHdmiOutputHDCPStatusEvent(int hdcpStatus)
         {
             LOGINFO("hdcpStatus[%d]",hdcpStatus);
+            LOGINFO("HDCP_TRACE callback source=onHdmiOutputHDCPStatusEvent value=%d", hdcpStatus);
             onHdcpProfileDisplayConnectionChanged();
         }
 
@@ -276,27 +278,34 @@ namespace WPEFramework
 
         void HdcpProfileImplementation::dispatchEvent(Event event, const HDCPStatus &hdcpstatus)
         {
+            LOGINFO("HDCP_TRACE dispatchEvent: submitting worker job instance=%p event=%u", static_cast<void*>(this), static_cast<unsigned int>(event));
             Core::IWorkerPool::Instance().Submit(DispatchJob::Create(this, event, hdcpstatus));
         }
 
         void HdcpProfileImplementation::Dispatch(Event event, const HDCPStatus& /*unused*/)
         {
+            LOGINFO("HDCP_TRACE Dispatch: worker executing instance=%p event=%u", static_cast<void*>(this), static_cast<unsigned int>(event));
             switch (event)
             {
                 case HDCPPROFILE_EVENT_DISPLAYCONNECTIONCHANGED:
                 {
                     // Gather HDCP status here on the worker thread (COMRPC-safe).
                     HDCPStatus hdcpstatus;
+                    LOGINFO("HDCP_TRACE Dispatch: querying current HDCP profile");
                     if (!GetHDCPStatusInternal(hdcpstatus)) {
                         LOGERR("Failed to getHdcpStatus");
                         return;
                     }
                     logHdcpStatus("Dispatch", hdcpstatus);
+                    LOGINFO("HDCP_TRACE Dispatch: profile connected=%d compliant=%d enabled=%d reason=%d supported=%s receiver=%s current=%s", hdcpstatus.isConnected, hdcpstatus.isHDCPCompliant, hdcpstatus.isHDCPEnabled, hdcpstatus.hdcpReason, hdcpstatus.supportedHDCPVersion.c_str(), hdcpstatus.receiverHDCPVersion.c_str(), hdcpstatus.currentHDCPVersion.c_str());
                     _adminLock.Lock();
+                    LOGINFO("HDCP_TRACE Dispatch: registered listeners=%u", static_cast<unsigned int>(_hdcpProfileNotification.size()));
                     std::list<Exchange::IHdcpProfile::INotification *>::const_iterator index(_hdcpProfileNotification.begin());
                     while (index != _hdcpProfileNotification.end())
                     {
+                        LOGINFO("HDCP_TRACE Dispatch: calling OnDisplayConnectionChanged listener=%p", static_cast<void*>(*index));
                         (*index)->OnDisplayConnectionChanged(hdcpstatus);
+                        LOGINFO("HDCP_TRACE Dispatch: OnDisplayConnectionChanged returned listener=%p", static_cast<void*>(*index));
                         ++index;
                     }
                     _adminLock.Unlock();
@@ -513,6 +522,7 @@ namespace WPEFramework
         // =========================================================================
         void HdcpProfileImplementation::OnDisplayHDMIHotPlug(int displayEvent)
         {
+            LOGINFO("HDCP_TRACE callback source=OnDisplayHDMIHotPlug value=%d", displayEvent);
             // Called when HDMI display is connected/disconnected
             // displayEvent: 0=CONNECTED, 1=DISCONNECTED
             if (HDMI_HOT_PLUG_EVENT_CONNECTED == displayEvent)
@@ -527,6 +537,7 @@ namespace WPEFramework
             // Called when HDCP authentication status changes
             // hdcpStatus: 0=UNPOWERED, 1=UNAUTHENTICATED, 2=AUTHENTICATED, etc.
             LOGINFO("Received OnHDCPStatusChange event data:%d", hdcpStatus);
+            LOGINFO("HDCP_TRACE callback source=OnHDCPStatusChange value=%d", hdcpStatus);
             dispatchEvent(HDCPPROFILE_EVENT_DISPLAYCONNECTIONCHANGED, HDCPStatus{});
         }
 
